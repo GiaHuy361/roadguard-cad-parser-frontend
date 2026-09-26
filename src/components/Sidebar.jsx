@@ -1,11 +1,11 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import axios from 'axios'
 import toast from 'react-hot-toast'
 import {
   MapPin, Upload, FileCode2, Settings2, ChevronRight,
   Layers, Loader2, X, Globe, Cpu, Info, Zap, Terminal,
   Map, Satellite, Eye, EyeOff, Download, Printer, LayoutGrid,
-  Sliders, Route, RulerIcon, FlipHorizontal2, CheckCircle2, FileSpreadsheet,
+  Sliders, Route, RulerIcon, FlipHorizontal2, CheckCircle2, FileSpreadsheet, Compass,
 } from 'lucide-react'
 import { downloadExcelReport } from '../utils/excelExporter'
 
@@ -171,7 +171,7 @@ function DarkInput({ id, label, type = 'text', value, onChange, icon: Icon, hint
 
 /* ─── Sidebar Component ───────────────────────────────────────── */
 export default function Sidebar({
-  onDataLoaded, onAnalyticsLoaded, geoJsonData, analyticsData,
+  onDataLoaded, onAnalyticsLoaded, onOverlayLoaded, geoJsonData, analyticsData,
   onCadFileChange,
   mapStyle, setMapStyle,
   showGeometry, setShowGeometry,
@@ -181,17 +181,25 @@ export default function Sidebar({
   showEdges, setShowEdges,
   showStations, setShowStations,
   roadParams, setRoadParams,
+  cadFile,
 }) {
   /* Upload */
-  const [file,     setFile]     = useState(null)
+  const [file,     setFile]     = useState(cadFile || null)
   const [loading,  setLoading]  = useState(false)
   const [dragging, setDragging] = useState(false)
   const fileInputRef = useRef(null)
+
+  useEffect(() => {
+    if (cadFile && cadFile !== file) {
+      setFile(cadFile)
+    }
+  }, [cadFile])
 
   /* Engineering params */
   const segmentLength = roadParams?.segmentLength ?? '100'
   const roadWidth     = roadParams?.roadWidth ?? '3.5'
   const slabLength    = roadParams?.slabLength ?? '4.0'
+  const [selectedCm,  setSelectedCm] = useState('105.75')
 
   const updateParam = (key, val) => {
     if (setRoadParams) {
@@ -227,36 +235,185 @@ export default function Sidebar({
     }
   }
 
+/* ── Chuyển đổi dữ liệu chuẩn từ POST /api/cad/parse-road thành GeoJSON ── */
+function convertRoadResponseToGeoJson(data) {
+  if (!data) return null
+
+  // Đảm bảo đúng định dạng [lng, lat] cho chuẩn GeoJSON quốc tế
+  const toLngLat = (p) => {
+    if (!Array.isArray(p) || p.length < 2) return p
+    const [a, b] = p
+    // Ở Việt Nam: Vĩ độ (Lat) ~ 8° - 23°, Kinh độ (Lng) ~ 102° - 110°.
+    // Nếu số thứ nhất < số thứ hai (ví dụ [10.88, 105.85]) => a là Lat, b là Lng => trả về [Lng, Lat] = [b, a]
+    if (Math.abs(a) < Math.abs(b)) {
+      return [Number(b), Number(a)]
+    }
+    return [Number(a), Number(b)]
+  }
+
+  const features = []
+
+  // 1. Dải Mặt Đường Bê Tông 2D (Road Surface Polygon - chất liệu xám bê tông #71717a)
+  if (data.roadSurfacePolygon && data.roadSurfacePolygon.length >= 3) {
+    const ring = data.roadSurfacePolygon.map(toLngLat)
+    if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
+      ring.push(ring[0])
+    }
+    features.push({
+      type: 'Feature',
+      id: 'road-surface-corridor',
+      properties: {
+        type: 'RoadSurface',
+        layer: 'MAT_DUONG_BETONG',
+        name: `Dải Mặt Đường Bê Tông (${data.roadWidth || 7.0}m)`,
+        roadWidth: data.roadWidth || 7.0,
+      },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [ring],
+      },
+    })
+  }
+
+  // 2. Trục Tim Tuyến Đường Chính Duy Nhất (Single Centerline - Khử toàn bộ nhánh phụ)
+  if (data.centerline && data.centerline.length >= 2) {
+    features.push({
+      type: 'Feature',
+      id: 'road-centerline-main',
+      properties: {
+        type: 'Centerline',
+        layer: 'TIM_TUYEN_CHINH',
+        name: data.roadName || 'Tim Tuyến Chính',
+        totalLength: data.totalLengthMeters,
+      },
+      geometry: {
+        type: 'LineString',
+        coordinates: data.centerline.map(toLngLat),
+      },
+    })
+  }
+
+  // 3. Mép đường trái & phải nếu có
+  if (data.leftEdge && data.leftEdge.length >= 2) {
+    features.push({
+      type: 'Feature',
+      id: 'road-edge-left',
+      properties: {
+        type: 'RoadEdge',
+        layer: 'MEP_TRAI',
+        name: 'Mép Đường Trái',
+      },
+      geometry: {
+        type: 'LineString',
+        coordinates: data.leftEdge.map(toLngLat),
+      },
+    })
+  }
+
+  if (data.rightEdge && data.rightEdge.length >= 2) {
+    features.push({
+      type: 'Feature',
+      id: 'road-edge-right',
+      properties: {
+        type: 'RoadEdge',
+        layer: 'MEP_PHAI',
+        name: 'Mép Đường Phải',
+      },
+      geometry: {
+        type: 'LineString',
+        coordinates: data.rightEdge.map(toLngLat),
+      },
+    })
+  }
+
+  return {
+    type: 'FeatureCollection',
+    bounds: data.bounds,
+    features,
+  }
+}
+
   const handleSubmit = async () => {
     if (!file) { toast.error('Vui lòng chọn file CAD (.dxf/.dwg) trước.'); return }
     setLoading(true)
-    const tid = toast.loading('Đang phân tích và xử lý bản vẽ CAD…')
+    const tid = toast.loading('Đang bóc tách tim tuyến chính & dựng dải mặt đường 2D…')
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      fd.append('targetSrid', '4326')
-      fd.append('tessellationSegments', '72')
-      fd.append('SegmentLength', parseFloat(segmentLength) || 100)
-      fd.append('RoadWidth', parseFloat(roadWidth) || 3.5)
-      fd.append('SlabLength', parseFloat(slabLength) || 4.0)
+      // 1. FormData cho API parse-road chuyên biệt (1 trục tim chính + Polygon mặt đường bê tông 2D)
+      const roadFd = new FormData()
+      roadFd.append('File', file)
+      const calculatedRoadWidth = (parseFloat(roadWidth) >= 5.0 ? parseFloat(roadWidth) : (parseFloat(roadWidth) * 2.0)) || 7.0
+      roadFd.append('RoadWidth', calculatedRoadWidth.toString())
+      if (selectedCm) {
+        roadFd.append('CentralMeridian', selectedCm.toString())
+      }
 
-      const { data } = await axios.post(
-        'http://localhost:5198/api/cad/parse-dxf',
-        fd,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
-      )
-      const featureCollection = data?.featureCollection ?? data
-      const analytics         = data?.analytics ?? null
-      toast.success('Bản vẽ đã được xử lý và hiển thị trên bản đồ!', { id: tid })
-      onDataLoaded(featureCollection)
-      if (analytics && onAnalyticsLoaded) onAnalyticsLoaded(analytics)
-    } catch (err) {
-      if (err?.response?.status === 422) {
-        toast.error('Lỗi: Bản vẽ không chứa dữ liệu tim tuyến hợp lệ. Vui lòng kiểm tra lại file!', { id: tid, duration: 6000 })
+      // 2. FormData cho API bóc tách kỹ thuật & tính toán TCVN (/api/cad/parse-dxf)
+      const parseFd = new FormData()
+      parseFd.append('file', file)
+      parseFd.append('targetSrid', '4326')
+      parseFd.append('tessellationSegments', '72')
+      if (selectedCm) {
+        parseFd.append('centralMeridian', selectedCm.toString())
+      }
+      parseFd.append('SegmentLength', (parseFloat(segmentLength) || 100).toString())
+      parseFd.append('RoadWidth', (parseFloat(roadWidth) || 3.5).toString())
+      parseFd.append('SlabLength', (parseFloat(slabLength) || 4.0).toString())
+
+      // 3. FormData cho Render Overlay
+      const overlayFd = new FormData()
+      overlayFd.append('file', file)
+      overlayFd.append('roadWidth', calculatedRoadWidth.toString())
+      overlayFd.append('outputSizePx', '2048')
+
+      // Gọi đồng thời: /api/cad/parse-road (Chính) và /api/cad/parse-dxf (Analytics TCVN)
+      const [roadResult, parseResult] = await Promise.allSettled([
+        axios.post('http://localhost:5198/api/cad/parse-road', roadFd, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        }),
+        axios.post('http://localhost:5198/api/cad/parse-dxf', parseFd, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        }),
+      ])
+
+      let loadedSomething = false
+
+      // ── Ưu tiên 1: Kết quả từ /api/cad/parse-road (Trục chính liền mạch + Polygon mặt đường) ──
+      if (roadResult.status === 'fulfilled' && roadResult.value?.data?.success) {
+        const roadData = roadResult.value.data
+        const geojson = convertRoadResponseToGeoJson(roadData)
+        if (geojson && onDataLoaded) {
+          onDataLoaded(geojson)
+          loadedSomething = true
+        }
+      }
+
+      // ── Xử lý kết quả Analytics từ /api/cad/parse-dxf (TCVN) ──
+      if (parseResult.status === 'fulfilled' && parseResult.value?.data) {
+        const pData = parseResult.value.data
+        const analytics = pData?.analytics ?? null
+        const featureCollection = pData?.featureCollection ?? pData
+
+        if (analytics && onAnalyticsLoaded) {
+          onAnalyticsLoaded(analytics)
+        }
+
+        // Fallback nếu parse-road không thành công
+        if (!loadedSomething && featureCollection && onDataLoaded) {
+          onDataLoaded(featureCollection)
+          loadedSomething = true
+        }
+      }
+
+      if (loadedSomething) {
+        toast.success('Đã bóc tách tim tuyến chính & dựng dải mặt đường bê tông 2D!', { id: tid })
       } else {
-        const msg = err?.response?.data?.message ?? err?.response?.data ?? err.message ?? 'Lỗi kết nối máy chủ'
+        const err = roadResult.status === 'rejected' ? roadResult.reason : parseResult.reason
+        const msg = err?.response?.data?.detail || err?.response?.data?.message || err?.message || 'Không thể xử lý bản vẽ CAD'
         toast.error(`Lỗi: ${msg}`, { id: tid })
       }
+    } catch (err) {
+      const msg = err?.response?.data?.detail || err?.response?.data?.message || err?.message || 'Lỗi kết nối máy chủ'
+      toast.error(`Lỗi: ${msg}`, { id: tid })
     } finally {
       setLoading(false)
     }
@@ -408,6 +565,46 @@ export default function Sidebar({
               unit="m"
               icon={RulerIcon}
             />
+
+            {/* Kinh tuyến trục VN-2000 (Tỉnh thành) */}
+            <div style={{ paddingTop: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <label htmlFor="centralMeridian" style={{ fontSize: '11px', fontWeight: 600, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <Compass size={12} style={{ color: '#06b6d4' }} />
+                  Kinh tuyến trục (VN-2000)
+                </label>
+                <span style={{ fontSize: '10px', color: '#06b6d4', fontFamily: 'monospace', fontWeight: 700 }}>
+                  {selectedCm}°
+                </span>
+              </div>
+              <select
+                id="centralMeridian"
+                value={selectedCm}
+                onChange={(e) => setSelectedCm(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  background: 'rgba(15,23,42,0.9)',
+                  border: '1px solid rgba(6,182,212,0.25)',
+                  borderRadius: '8px',
+                  color: '#e2e8f0',
+                  fontSize: '11px',
+                  fontFamily: 'Inter, sans-serif',
+                  outline: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                <option value="105.75">TP.HCM / Long An / Tiền Giang (105°45')</option>
+                <option value="105.50">Tây Ninh (105°30')</option>
+                <option value="105.75">Bình Dương / Bình Phước (105°45')</option>
+                <option value="107.75">Đồng Nai / BR-Vũng Tàu (107°45')</option>
+                <option value="105.00">Cần Thơ / Hậu Giang (105°00')</option>
+                <option value="107.75">Đà Nẵng / Quảng Nam (107°45')</option>
+                <option value="105.00">Hà Nội / Hải Phòng (105°00')</option>
+                <option value="106.00">Bến Tre (106°00')</option>
+                <option value="105.00">Múi 6° Quốc gia (105°00')</option>
+              </select>
+            </div>
           </div>
 
           {/* Apply button */}
@@ -440,11 +637,11 @@ export default function Sidebar({
         <GlassCard>
           <p style={{ fontSize: '10px', color: '#475569', marginBottom: 8 }}>Chọn nền bản đồ hiển thị</p>
           <div style={{ display: 'flex', gap: 8 }}>
-            <MapStyleBtn active={mapStyle === 'dark'}      icon={LayoutGrid} label="Bản đồ số (OSM)" onClick={() => setMapStyle('dark')} />
+            <MapStyleBtn active={mapStyle === 'osm'}       icon={LayoutGrid} label="Bản đồ số (OSM)" onClick={() => setMapStyle('osm')} />
             <MapStyleBtn active={mapStyle === 'satellite'} icon={Satellite}  label="Vệ tinh (Satellite)"   onClick={() => setMapStyle('satellite')} />
           </div>
           <p style={{ fontSize: '10px', color: '#334155', marginTop: 8, fontFamily: 'monospace' }}>
-            {mapStyle === 'dark' ? '→ OpenStreetMap Standard' : '→ ESRI World Imagery'}
+            {mapStyle === 'osm' ? '→ OpenStreetMap Standard' : '→ ESRI World Imagery'}
           </p>
         </GlassCard>
 
@@ -592,7 +789,7 @@ export default function Sidebar({
           }
         </button>
         <p style={{ textAlign: 'center', fontSize: '10px', color: '#1e3a50', marginTop: '10px', fontFamily: 'monospace' }}>
-          POST → <span style={{ color: '#0e7490' }}>localhost:5198</span>/api/cad/parse-dxf
+          POST → <span style={{ color: '#0e7490' }}>localhost:5198</span>/api/cad/render-overlay
         </p>
       </div>
     </div>

@@ -59,7 +59,7 @@ function StatCard({ icon: Icon, label, value, accent = '#06b6d4', pulse = false,
 }
 
 /* ─── Stats Bar ────────────────────────────────────────────────── */
-function StatsBar({ geoJsonData, analyticsData }) {
+function StatsBar({ geoJsonData, analyticsData, cadStats, rawDxfFile }) {
   const geoStats = useMemo(() => {
     if (!geoJsonData) return null
     const features = geoJsonData.features ?? []
@@ -67,6 +67,10 @@ function StatsBar({ geoJsonData, analyticsData }) {
     const types = [...new Set(features.map(f => f.geometry?.type).filter(Boolean))]
     return { featureCount: features.length, totalVertices, typeLabel: types.length ? types.join(' · ') : '—' }
   }, [geoJsonData])
+
+  const hasCadInfo = !!(cadStats || rawDxfFile)
+  const cadFileName = cadStats?.fileName || rawDxfFile?.name
+  const cadFileSize = cadStats?.fileSize || (rawDxfFile?.size ? (rawDxfFile.size / (1024 * 1024)).toFixed(2) + ' MB' : null)
 
   return (
     <div
@@ -81,16 +85,50 @@ function StatsBar({ geoJsonData, analyticsData }) {
       }}
     >
       {!geoStats ? (
-        <div className="flex items-center gap-3 px-5 py-3">
-          <span className="relative flex h-2.5 w-2.5 shrink-0">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-60" />
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500" style={{ boxShadow: '0 0 8px rgba(6,182,212,0.8)' }} />
-          </span>
-          <span style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>Chờ nạp dữ liệu CAD…</span>
-          <span style={{ marginLeft: 'auto', fontSize: '10px', color: '#1e3a50', fontFamily: 'monospace', letterSpacing: '0.08em' }}>
-            ROADGUARD GIS v2.0
-          </span>
-        </div>
+        !hasCadInfo ? (
+          <div className="flex items-center gap-3 px-5 py-3">
+            <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-60" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500" style={{ boxShadow: '0 0 8px rgba(6,182,212,0.8)' }} />
+            </span>
+            <span style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>Chờ nạp dữ liệu CAD… (Kéo thả file .dxf vào bản đồ)</span>
+            <span style={{ marginLeft: 'auto', fontSize: '10px', color: '#1e3a50', fontFamily: 'monospace', letterSpacing: '0.08em' }}>
+              ROADGUARD GIS v2.0
+            </span>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'stretch', overflowX: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', flexShrink: 0 }}>
+              <span className="relative flex" style={{ height: 8, width: 8 }}>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400" style={{ opacity: 0.7 }} />
+                <span className="relative inline-flex rounded-full bg-cyan-400" style={{ height: 8, width: 8, boxShadow: '0 0 8px rgba(6,182,212,0.9)' }} />
+              </span>
+              <span style={{ fontSize: '9px', fontWeight: 800, color: '#22d3ee', letterSpacing: '0.15em', textTransform: 'uppercase' }}>CAD Ready</span>
+            </div>
+            <VDivider />
+            <StatCard icon={Compass} label="Tệp Bản Vẽ CAD" value={cadFileName || 'CAD File'} accent="#22d3ee" pulse />
+            {cadFileSize && (
+              <>
+                <VDivider />
+                <StatCard icon={Database} label="Dung Lượng" value={cadFileSize} accent="#94a3b8" />
+              </>
+            )}
+            {cadStats?.entityCount != null && (
+              <>
+                <VDivider />
+                <StatCard icon={Hash} label="Tổng Đối Tượng" value={`${cadStats.entityCount.toLocaleString()} ent`} accent="#34d399" highlight />
+              </>
+            )}
+            {cadStats?.layerCount != null && (
+              <>
+                <VDivider />
+                <StatCard icon={Layers} label="Tổng Số Layer" value={`${cadStats.layerCount} layers`} accent="#818cf8" />
+              </>
+            )}
+            <VDivider />
+            <StatCard icon={Globe} label="Engine Hiển Thị" value="WebGL 100% AutoCAD" accent="#fb923c" />
+          </div>
+        )
       ) : (
         <div style={{ display: 'flex', alignItems: 'stretch', overflowX: 'auto' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', flexShrink: 0 }}>
@@ -98,9 +136,15 @@ function StatsBar({ geoJsonData, analyticsData }) {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400" style={{ opacity: 0.7 }} />
               <span className="relative inline-flex rounded-full bg-emerald-400" style={{ height: 8, width: 8, boxShadow: '0 0 8px rgba(52,211,153,0.9)' }} />
             </span>
-            <span style={{ fontSize: '9px', fontWeight: 800, color: '#34d399', letterSpacing: '0.15em', textTransform: 'uppercase' }}>Live</span>
+            <span style={{ fontSize: '9px', fontWeight: 800, color: '#34d399', letterSpacing: '0.15em', textTransform: 'uppercase' }}>Live GIS</span>
           </div>
           <VDivider />
+          {cadFileName && (
+            <>
+              <StatCard icon={Compass} label="Tệp CAD" value={cadFileName} accent="#38bdf8" />
+              <VDivider />
+            </>
+          )}
           <StatCard icon={Layers}   label="Tổng cấu kiện" value={geoStats.featureCount.toLocaleString()} accent="#06b6d4" pulse />
           <VDivider />
           <StatCard icon={Hash}     label="Tổng điểm"     value={geoStats.totalVertices.toLocaleString()} accent="#818cf8" />
@@ -304,8 +348,10 @@ function JsonInspector({ geoJsonData }) {
 export default function App() {
   const [geoJsonData,      setGeoJsonData]      = useState(null)
   const [analyticsData,    setAnalyticsData]    = useState(null)
+  const [roadOverlay,      setRoadOverlay]      = useState(null) // { image_base64, bounds }
   const [rawDxfFile,       setRawDxfFile]       = useState(null)
-  const [mapStyle,         setMapStyle]         = useState('dark')
+  const [cadStats,         setCadStats]         = useState(null)
+  const [mapStyle,         setMapStyle]         = useState('satellite')
   const [showGeometry,     setShowGeometry]     = useState(true)
   const [showVertices,     setShowVertices]     = useState(false)
   const [showCenterline,   setShowCenterline]   = useState(true)
@@ -328,8 +374,10 @@ export default function App() {
         style={{ width: '380px', background: '#0f172a', borderRight: '1px solid rgba(51,65,85,0.8)', boxShadow: '4px 0 32px -4px rgba(0,0,0,0.5)' }}
       >
         <Sidebar
+          cadFile={rawDxfFile}
           onDataLoaded={setGeoJsonData}
           onAnalyticsLoaded={setAnalyticsData}
+          onOverlayLoaded={setRoadOverlay}
           onCadFileChange={setRawDxfFile}
           geoJsonData={geoJsonData}
           analyticsData={analyticsData}
@@ -355,31 +403,41 @@ export default function App() {
       {/* ── Main Workspace ── */}
       <main className="flex-1 relative overflow-hidden">
         {/* Floating Stats Bar */}
-        <StatsBar geoJsonData={geoJsonData} analyticsData={analyticsData} />
+        <StatsBar
+          geoJsonData={geoJsonData}
+          analyticsData={analyticsData}
+          cadStats={cadStats}
+          rawDxfFile={rawDxfFile}
+        />
 
         {/* Tab Bar */}
         <TabBar activeTab={activeTab} setActiveTab={setActiveTab} />
 
         {/* Tab Content — CadMap fills inset-0, other tabs sit below the bars */}
-        {activeTab === 'map' && (
-          <div className="absolute inset-0">
-            <CadMap
-              geoJsonData={geoJsonData}
-              mapStyle={mapStyle}
-              showGeometry={showGeometry}
-              showVertices={showVertices}
-              showCenterline={showCenterline}
-              showRoadSurface={showRoadSurface}
-              showEdges={showEdges}
-              showStations={showStations}
-            />
-          </div>
-        )}
-        {activeTab === 'cad' && (
-          <div className="absolute inset-0" style={{ top: '108px' }}>
-            <CadViewer rawDxfFile={rawDxfFile} onFileLoaded={setRawDxfFile} />
-          </div>
-        )}
+        {/* Tab Content — CadMap & CadViewer stay persistent in DOM to avoid WebGL context loss */}
+        <div className="absolute inset-0" style={{ display: activeTab === 'map' ? 'block' : 'none' }}>
+          <CadMap
+            geoJsonData={geoJsonData}
+            roadOverlay={roadOverlay}
+            mapStyle={mapStyle}
+            showGeometry={showGeometry}
+            showVertices={showVertices}
+            showCenterline={showCenterline}
+            showRoadSurface={showRoadSurface}
+            showEdges={showEdges}
+            showStations={showStations}
+            roadParams={roadParams}
+          />
+        </div>
+
+        <div className="absolute inset-0" style={{ top: '108px', display: activeTab === 'cad' ? 'block' : 'none' }}>
+          <CadViewer
+            rawDxfFile={rawDxfFile}
+            onFileLoaded={setRawDxfFile}
+            onStatsLoaded={setCadStats}
+            isVisible={activeTab === 'cad'}
+          />
+        </div>
         {activeTab !== 'map' && activeTab !== 'cad' && (
           <div className="absolute inset-0" style={{ top: '108px' }}>
             {activeTab === 'profile' && (
