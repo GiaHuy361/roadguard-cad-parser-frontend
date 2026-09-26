@@ -582,49 +582,36 @@ export default function CadMap({
       <div ref={mapContainerRef} className="w-full h-full" />
 
       {/* ── 3D View Floating Controls Toolbar ───────────────────── */}
-      <div className="absolute top-20 right-4 z-10 flex flex-col gap-2">
+      <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
         <button
           type="button"
           onClick={toggle3DView}
           title={is3D ? 'Chuyển sang góc nhìn phẳng 2D (Top-down)' : 'Chuyển sang góc nhìn nghiêng 3D (WebGL Pitch)'}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition shadow-2xl cursor-pointer"
-          style={{
-            background: is3D ? 'linear-gradient(135deg, #0e7490, #0284c7)' : 'rgba(15,23,42,0.9)',
-            border: is3D ? '1px solid #22d3ee' : '1px solid rgba(51,65,85,0.8)',
-            color: '#fff',
-            backdropFilter: 'blur(12px)',
-            boxShadow: is3D ? '0 0 20px rgba(6,182,212,0.4)' : '0 4px 16px rgba(0,0,0,0.5)',
-          }}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition cursor-pointer select-none border backdrop-blur-md shadow-lg ${
+            is3D
+              ? 'bg-blue-600 border-blue-500 text-white'
+              : 'bg-[#11141c]/90 border-[#232938] text-slate-300 hover:bg-[#1a202c]'
+          }`}
         >
-          <Rotate3d size={15} className={is3D ? 'text-cyan-300' : 'text-slate-400'} />
-          <span>{is3D ? 'Góc Nhìn 3D (55°)' : 'Góc Nhìn 2D'}</span>
+          <Rotate3d size={14} className={is3D ? 'text-white' : 'text-slate-400'} />
+          <span>{is3D ? 'Góc nhìn 3D' : 'Góc nhìn 2D'}</span>
         </button>
 
         <button
           type="button"
           onClick={handleFitRoad}
           title="Căn giữa toàn bộ tuyến đường trên bản đồ"
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition shadow-xl cursor-pointer"
-          style={{
-            background: 'rgba(15,23,42,0.9)',
-            border: '1px solid rgba(51,65,85,0.8)',
-            color: '#94a3b8',
-            backdropFilter: 'blur(12px)',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#22d3ee'; e.currentTarget.style.borderColor = '#0891b2' }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#94a3b8'; e.currentTarget.style.borderColor = 'rgba(51,65,85,0.8)' }}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition cursor-pointer select-none bg-[#11141c]/90 border border-[#232938] text-slate-300 hover:bg-[#1a202c] backdrop-blur-md shadow-lg"
         >
-          <Maximize2 size={14} />
-          <span>Toàn Tuyến</span>
+          <Maximize2 size={14} className="text-slate-400" />
+          <span>Toàn tuyến</span>
         </button>
       </div>
 
       {/* ── Hint when no data loaded yet ─────────────────────────── */}
       {!cleanGeoJson && (
-        <div style={{ position: 'absolute', bottom: 40, left: '50%', transform: 'translateX(-50%)', zIndex: 10, pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 20px', borderRadius: 99, background: 'rgba(10,15,30,0.85)', border: '1px solid rgba(6,182,212,0.3)', backdropFilter: 'blur(12px)', fontFamily: 'Inter,sans-serif' }}>
-          <span style={{ fontSize: '12px', color: '#38bdf8', fontWeight: 600, whiteSpace: 'nowrap' }}>
-            ⚡ Bấm nút "PARSE & VISUALIZE" ở thanh bên để hiển thị dải mặt đường bê tông 2D trên MapLibre GL
-          </span>
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none flex items-center gap-2 px-4 py-2 rounded-full bg-[#11141c]/90 border border-[#232938] backdrop-blur-md text-xs font-medium text-slate-400 shadow-xl">
+          <span>⚡ Bấm "Phân Tích & Dựng Tuyến" để hiển thị dải mặt đường trên bản đồ</span>
         </div>
       )}
 
