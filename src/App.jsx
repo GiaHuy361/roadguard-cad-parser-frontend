@@ -34,7 +34,7 @@ export default function App() {
   const [showStations,    setShowStations]    = useState(true)
   const [showSlabs,       setShowSlabs]       = useState(true)
   const [showSlabLabels,  setShowSlabLabels]  = useState(false)
-  const [completedSegments, setCompletedSegments] = useState(['SEG-01'])
+  const [completedSegments, setCompletedSegments] = useState([])
   const [focusedSegment,  setFocusedSegment]  = useState(null)
   const [sidebarCollapsed,setSidebarCollapsed]= useState(false)
   const [roadParams,      setRoadParams]      = useState({
@@ -42,6 +42,18 @@ export default function App() {
     roadWidth: '3.5',
     slabLength: '4.0',
   })
+
+  const handleCadFileChange = (file) => {
+    setRawDxfFile(file)
+    if (!file) {
+      setGeoJsonData(null)
+      setAnalyticsData(null)
+      setRoadOverlay(null)
+      setCadStats(null)
+      setCompletedSegments([])
+      setFocusedSegment(null)
+    }
+  }
   const [activeTab,       setActiveTab]       = useState('map')
   const [copied,          setCopied]          = useState(false)
 
@@ -208,7 +220,7 @@ export default function App() {
           onDataLoaded={setGeoJsonData}
           onAnalyticsLoaded={setAnalyticsData}
           onOverlayLoaded={setRoadOverlay}
-          onCadFileChange={setRawDxfFile}
+          onCadFileChange={handleCadFileChange}
           geoJsonData={geoJsonData}
           analyticsData={analyticsData}
           mapStyle={mapStyle}

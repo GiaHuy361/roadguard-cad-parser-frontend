@@ -413,7 +413,7 @@ export default function Sidebar({
 
   // ── Drone Segments Calculation ──
   const droneSegments = useMemo(() => {
-    let totLen = 746.57
+    let totLen = 0
     if (geoJsonData?.totalLengthMeters && Number(geoJsonData.totalLengthMeters) > 0) {
       totLen = Number(geoJsonData.totalLengthMeters)
     } else if (geoJsonData?.features) {
@@ -425,8 +425,10 @@ export default function Sidebar({
       totLen = Number(analyticsData.totalLengthMeters)
     }
 
+    if (totLen <= 0) return []
+
     const segL = parseFloat(segmentLength) || 100
-    const count = Math.max(1, Math.ceil(totLen / segL))
+    const count = Math.ceil(totLen / segL)
     const list = []
     for (let i = 1; i <= count; i++) {
       const segId = `SEG-${String(i).padStart(2, '0')}`
@@ -911,7 +913,7 @@ export default function Sidebar({
               Tiến Độ Bay Drone Theo Phân Đoạn
             </span>
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
-              {completedSegments.length}/{droneSegments.length} đoạn ({Math.round((completedSegments.length / (droneSegments.length || 1)) * 100)}%)
+              {completedSegments.length}/{droneSegments.length} đoạn ({droneSegments.length > 0 ? Math.round((completedSegments.length / droneSegments.length) * 100) : 0}%)
             </span>
           </div>
 
@@ -919,7 +921,7 @@ export default function Sidebar({
           <div className="w-full bg-[#0e121f] h-2 rounded-full overflow-hidden border border-[#232d47]">
             <div
               className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all duration-300"
-              style={{ width: `${Math.round((completedSegments.length / (droneSegments.length || 1)) * 100)}%` }}
+              style={{ width: `${droneSegments.length > 0 ? Math.round((completedSegments.length / droneSegments.length) * 100) : 0}%` }}
             />
           </div>
 
@@ -929,15 +931,17 @@ export default function Sidebar({
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
+                disabled={droneSegments.length === 0}
                 onClick={handleSelectAllSegments}
-                className="px-2 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 font-medium transition-colors"
+                className="px-2 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 disabled:opacity-40 disabled:pointer-events-none text-blue-300 border border-blue-500/30 font-medium transition-colors"
               >
                 Tất cả
               </button>
               <button
                 type="button"
+                disabled={droneSegments.length === 0}
                 onClick={handleDeselectAllSegments}
-                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 font-medium transition-colors"
+                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-slate-400 hover:text-slate-200 border border-slate-700 font-medium transition-colors"
               >
                 Bỏ chọn
               </button>
@@ -946,55 +950,63 @@ export default function Sidebar({
 
           {/* Segment List */}
           <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-800">
-            {droneSegments.map((seg) => {
-              const isCompleted = completedSegments.includes(seg.id)
-              return (
-                <div
-                  key={seg.id}
-                  className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
-                    isCompleted
-                      ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-200'
-                      : 'bg-[#0e121f] border-[#232d47] text-slate-300 hover:border-slate-600'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <button
-                      type="button"
-                      onClick={() => toggleSegment(seg.id)}
-                      className={`transition-colors ${isCompleted ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
-                      title={isCompleted ? 'Đánh dấu chưa hoàn thành' : 'Đánh dấu đã bay xong'}
-                    >
-                      {isCompleted ? <CheckSquare size={15} /> : <Square size={15} />}
-                    </button>
-                    <div className="flex flex-col min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-mono font-bold text-xs text-white">{seg.id}</span>
-                        <span className={`text-[9px] px-1.5 py-0.2 rounded font-semibold ${
-                          isCompleted
-                            ? 'bg-emerald-500/20 text-emerald-300'
-                            : 'bg-slate-800 text-slate-400'
-                        }`}>
-                          {isCompleted ? 'ĐÃ BAY' : 'CHỜ BAY'}
+            {droneSegments.length > 0 ? (
+              droneSegments.map((seg) => {
+                const isCompleted = completedSegments.includes(seg.id)
+                return (
+                  <div
+                    key={seg.id}
+                    className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                      isCompleted
+                        ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-200'
+                        : 'bg-[#0e121f] border-[#232d47] text-slate-300 hover:border-slate-600'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => toggleSegment(seg.id)}
+                        className={`transition-colors ${isCompleted ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
+                        title={isCompleted ? 'Đánh dấu chưa hoàn thành' : 'Đánh dấu đã bay xong'}
+                      >
+                        {isCompleted ? <CheckSquare size={15} /> : <Square size={15} />}
+                      </button>
+                      <div className="flex flex-col min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono font-bold text-xs text-white">{seg.id}</span>
+                          <span className={`text-[9px] px-1.5 py-0.2 rounded font-semibold ${
+                            isCompleted
+                              ? 'bg-emerald-500/20 text-emerald-300'
+                              : 'bg-slate-800 text-slate-400'
+                          }`}>
+                            {isCompleted ? 'ĐÃ BAY' : 'CHỜ BAY'}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono text-slate-400 truncate">
+                          {seg.range} ({seg.length}m)
                         </span>
                       </div>
-                      <span className="text-[10px] font-mono text-slate-400 truncate">
-                        {seg.range} ({seg.length}m)
-                      </span>
                     </div>
-                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => onFocusSegment?.(seg)}
-                    className="flex items-center gap-1 px-2 py-1 rounded bg-[#161c2e] hover:bg-blue-600 text-slate-300 hover:text-white border border-[#232d47] text-[10px] font-medium transition-all shadow-sm shrink-0"
-                    title="Định vị phân đoạn này trên bản đồ"
-                  >
-                    <Target size={11} className="text-cyan-400 group-hover:text-white" />
-                    <span>Lia tới</span>
-                  </button>
-                </div>
-              )
-            })}
+                    <button
+                      type="button"
+                      onClick={() => onFocusSegment?.(seg)}
+                      className="flex items-center gap-1 px-2 py-1 rounded bg-[#161c2e] hover:bg-blue-600 text-slate-300 hover:text-white border border-[#232d47] text-[10px] font-medium transition-all shadow-sm shrink-0"
+                      title="Định vị phân đoạn này trên bản đồ"
+                    >
+                      <Target size={11} className="text-cyan-400 group-hover:text-white" />
+                      <span>Lia tới</span>
+                    </button>
+                  </div>
+                )
+              })
+            ) : (
+              <div className="py-6 px-3 text-center border border-dashed border-[#232d47] rounded-lg bg-[#0e121f]/50">
+                <Navigation size={18} className="mx-auto text-slate-600 mb-1.5" />
+                <p className="text-[11px] text-slate-400 font-medium">Chưa có phân đoạn</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">Tải lên bản vẽ CAD để tự động tạo danh sách phân đoạn tuyến</p>
+              </div>
+            )}
           </div>
         </div>
 
