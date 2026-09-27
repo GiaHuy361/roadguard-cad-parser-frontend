@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import axios from 'axios'
 import toast from 'react-hot-toast'
 import {
@@ -6,7 +6,8 @@ import {
   FileSpreadsheet, Compass, Upload,
   CheckCircle2, Sparkles, Download,
   Eye, EyeOff, Ruler, FlipHorizontal2, Route,
-  BarChart3, ChevronLeft, ChevronRight, Settings2
+  BarChart3, ChevronLeft, Settings2,
+  CheckSquare, Square, Search, Target, Navigation
 } from 'lucide-react'
 import { downloadExcelReport } from '../utils/excelExporter'
 
@@ -39,6 +40,13 @@ export default function Sidebar({
   setShowEdges,
   showStations,
   setShowStations,
+  showSlabs,
+  setShowSlabs,
+  showSlabLabels,
+  setShowSlabLabels,
+  completedSegments = [],
+  setCompletedSegments,
+  onFocusSegment,
   roadParams,
   setRoadParams,
   cadFile,
@@ -48,6 +56,8 @@ export default function Sidebar({
   const [file, setFile] = useState(cadFile || null)
   const [loading, setLoading] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const [cadLayerStats, setCadLayerStats] = useState([])
+  const [layerSearch, setLayerSearch] = useState('')
   const fileInputRef = useRef(null)
 
   useEffect(() => {
@@ -108,8 +118,12 @@ export default function Sidebar({
 
     const features = []
 
+    // 1. Dải Mặt Đường Bê Tông 2D (Single Polygon hoặc Multi Polygon)
+    let hasMainSurface = false
     if (data.roadSurfacePolygon && data.roadSurfacePolygon.length >= 3) {
-      const ring = data.roadSurfacePolygon.map(toLngLat)
+      const isNested = Array.isArray(data.roadSurfacePolygon[0]) && Array.isArray(data.roadSurfacePolygon[0][0])
+      const rawRing = isNested ? data.roadSurfacePolygon[0] : data.roadSurfacePolygon
+      const ring = rawRing.map(toLngLat)
       if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
         ring.push(ring[0])
       }
@@ -127,8 +141,77 @@ export default function Sidebar({
           coordinates: [ring],
         },
       })
+      hasMainSurface = true
     }
 
+    // 1.2 Đảo giao thông (Traffic Islands từ Backend)
+    const islandFeatures = []
+    if (Array.isArray(data.trafficIslands) && data.trafficIslands.length > 0) {
+      data.trafficIslands.forEach((island, iIdx) => {
+        if (Array.isArray(island) && island.length >= 3) {
+          const ring = island.map(toLngLat)
+          if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
+            ring.push(ring[0])
+          }
+          islandFeatures.push({
+            type: 'Feature',
+            id: `traffic-island-${iIdx}`,
+            properties: {
+              type: 'TrafficIsland',
+              layer: 'DAO_GIAO_THONG',
+              name: `Đảo Giao Thông ${iIdx + 1}`,
+              isIsland: true,
+            },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [ring],
+            },
+          })
+        }
+      })
+    }
+
+    // 1.3 Hỗ trợ thêm nếu backend trả về danh sách nhiều polygon (roadSurfacePolygons)
+    if (Array.isArray(data.roadSurfacePolygons) && data.roadSurfacePolygons.length > 0) {
+      data.roadSurfacePolygons.forEach((poly, pIdx) => {
+        if (pIdx === 0 && hasMainSurface) return
+        if (pIdx > 0 && islandFeatures.length > 0) return
+
+        if (Array.isArray(poly) && poly.length >= 3) {
+          const ring = poly.map(toLngLat)
+          if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
+            ring.push(ring[0])
+          }
+          const isIsland = pIdx > 0 || hasMainSurface
+          const feat = {
+            type: 'Feature',
+            id: isIsland ? `traffic-island-p-${pIdx}` : `road-surface-polygon-${pIdx}`,
+            properties: {
+              type: isIsland ? 'TrafficIsland' : 'RoadSurface',
+              layer: isIsland ? 'DAO_GIAO_THONG' : 'MAT_DUONG_BETONG',
+              name: isIsland ? `Đảo Giao Thông Phân Đoạn ${pIdx}` : `Mặt Đường Phân Đoạn ${pIdx + 1}`,
+              roadWidth: data.roadWidth || 7.0,
+              isIsland,
+            },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [ring],
+            },
+          }
+          if (isIsland) {
+            islandFeatures.push(feat)
+          } else {
+            features.push(feat)
+            hasMainSurface = true
+          }
+        }
+      })
+    }
+
+    // Đẩy tất cả đảo giao thông vào features
+    features.push(...islandFeatures)
+
+    // 2. Trục Tim Tuyến Đường Chính
     if (data.centerline && data.centerline.length >= 2) {
       features.push({
         type: 'Feature',
@@ -143,6 +226,28 @@ export default function Sidebar({
           type: 'LineString',
           coordinates: data.centerline.map(toLngLat),
         },
+      })
+    }
+
+    // 2.2 Các Nhánh Tim Tuyến Phụ & Ngã 3 Tam Giác (Centerline Branches)
+    if (Array.isArray(data.centerlineBranches) && data.centerlineBranches.length > 0) {
+      data.centerlineBranches.forEach((branch, bIdx) => {
+        if (Array.isArray(branch) && branch.length >= 2) {
+          features.push({
+            type: 'Feature',
+            id: `road-centerline-branch-${bIdx}`,
+            properties: {
+              type: 'Centerline',
+              layer: 'TIM_TUYEN_NHANH',
+              name: `Nhánh Tim Nút Giao ${bIdx + 1}`,
+              isBranch: true,
+            },
+            geometry: {
+              type: 'LineString',
+              coordinates: branch.map(toLngLat),
+            },
+          })
+        }
       })
     }
 
@@ -181,6 +286,8 @@ export default function Sidebar({
     return {
       type: 'FeatureCollection',
       bounds: data.bounds,
+      totalLengthMeters: data.totalLengthMeters,
+      layerStats: data.layerStats,
       features,
     }
   }
@@ -225,6 +332,9 @@ export default function Sidebar({
 
       if (roadResult.status === 'fulfilled' && roadResult.value?.data?.success) {
         const roadData = roadResult.value.data
+        if (Array.isArray(roadData.layerStats)) {
+          setCadLayerStats(roadData.layerStats)
+        }
         const geojson = convertRoadResponseToGeoJson(roadData)
         if (geojson && onDataLoaded) {
           onDataLoaded(geojson)
@@ -291,6 +401,117 @@ export default function Sidebar({
     a.click()
     URL.revokeObjectURL(url)
     toast.success('Đã tải tệp GeoJSON!')
+  }
+
+  // ── Drone Segments Calculation ──
+  const droneSegments = useMemo(() => {
+    let totLen = 865.5
+    if (analyticsData?.totalLengthMeters && Number(analyticsData.totalLengthMeters) > 0) {
+      totLen = Number(analyticsData.totalLengthMeters)
+    } else if (geoJsonData?.totalLengthMeters && Number(geoJsonData.totalLengthMeters) > 0) {
+      totLen = Number(geoJsonData.totalLengthMeters)
+    } else if (geoJsonData?.features) {
+      const cl = geoJsonData.features.find(f => f.id === 'road-centerline-main' || f.properties?.type === 'Centerline')
+      if (cl?.properties?.totalLength) {
+        totLen = Number(cl.properties.totalLength)
+      }
+    }
+
+    const segL = parseFloat(segmentLength) || 100
+    const count = Math.max(1, Math.ceil(totLen / segL))
+    const list = []
+    for (let i = 1; i <= count; i++) {
+      const segId = `SEG-${String(i).padStart(2, '0')}`
+      const startM = (i - 1) * segL
+      const endM = Math.min(i * segL, totLen)
+      const startKm = `Km0+${String(Math.round(startM)).padStart(3, '0')}`
+      const endKm = `Km0+${String(Math.round(endM)).padStart(3, '0')}`
+      list.push({
+        id: segId,
+        index: i,
+        name: `Phân đoạn ${i}`,
+        range: `${startKm} - ${endKm}`,
+        length: Math.round(endM - startM),
+      })
+    }
+    return list
+  }, [analyticsData, geoJsonData, segmentLength])
+
+  const toggleSegment = (segId) => {
+    if (!setCompletedSegments) return
+    setCompletedSegments(prev => {
+      const current = Array.isArray(prev) ? prev : []
+      if (current.includes(segId)) {
+        return current.filter(id => id !== segId)
+      } else {
+        return [...current, segId]
+      }
+    })
+  }
+
+  const handleSelectAllSegments = () => {
+    if (!setCompletedSegments) return
+    setCompletedSegments(droneSegments.map(s => s.id))
+    toast.success('Đã đánh dấu hoàn thành tất cả phân đoạn!')
+  }
+
+  const handleDeselectAllSegments = () => {
+    if (!setCompletedSegments) return
+    setCompletedSegments([])
+    toast('Đã hoàn tác trạng thái phân đoạn.')
+  }
+
+  // ── CAD Layer Stats & Filtering ──
+  const activeLayerStats = useMemo(() => {
+    if (cadLayerStats && cadLayerStats.length > 0) return cadLayerStats
+    if (geoJsonData?.layerStats && geoJsonData.layerStats.length > 0) return geoJsonData.layerStats
+    if (analyticsData?.layerBreakdown && Array.isArray(analyticsData.layerBreakdown)) {
+      return analyticsData.layerBreakdown.map(l => ({
+        name: l.layer || l.name,
+        count: l.entityCount || l.count || 0,
+        category: l.category || 'Other'
+      }))
+    }
+    if (geoJsonData?.features) {
+      const counts = {}
+      geoJsonData.features.forEach(f => {
+        const lyr = f.properties?.layer || f.layer || 'CHUA_PHAN_LOAI'
+        counts[lyr] = (counts[lyr] || 0) + 1
+      })
+      return Object.entries(counts).map(([name, count]) => {
+        let category = 'Other'
+        const u = name.toUpperCase()
+        if (u.includes('TIM') || u.includes('CENTER')) category = 'RoadNetwork'
+        else if (u.includes('MEP')) category = 'RoadEdge'
+        else if (u.includes('MAT') || u.includes('SURFACE')) category = 'RoadSurface'
+        else if (u.includes('DAO') || u.includes('ISLAND')) category = 'Island'
+        return { name, count, category }
+      }).sort((a, b) => b.count - a.count)
+    }
+    return []
+  }, [cadLayerStats, geoJsonData, analyticsData])
+
+  const filteredLayers = useMemo(() => {
+    if (!layerSearch.trim()) return activeLayerStats
+    const term = layerSearch.toLowerCase()
+    return activeLayerStats.filter(l => 
+      l.name.toLowerCase().includes(term) || (l.category && l.category.toLowerCase().includes(term))
+    )
+  }, [activeLayerStats, layerSearch])
+
+  const getCategoryColor = (cat) => {
+    switch (cat) {
+      case 'RoadNetwork': return 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+      case 'RoadSurface': return 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
+      case 'RoadEdge':
+      case 'LeftEdge': return 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+      case 'Survey':
+      case 'Building': return 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+      case 'Drainage': return 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+      case 'CrossSection': return 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+      case 'Sidewalk': return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+      default: return 'bg-slate-700/40 text-slate-300 border-slate-600/30'
+    }
   }
 
   const formatBytes = (b) =>
@@ -512,6 +733,45 @@ export default function Sidebar({
               </button>
             </div>
 
+            {/* Slabs & Joints */}
+            <div className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-slate-800/40 transition-colors">
+              <div className="flex items-center gap-2.5">
+                <div className="w-4 h-2.5 rounded-sm border border-cyan-400 bg-cyan-950/40 relative flex items-center justify-center">
+                  <div className="w-full h-[1px] bg-cyan-300" />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-xs font-medium text-slate-200">Tấm BTXM & Khe co giãn</span>
+                  <span className="text-[10px] text-cyan-400 font-mono">TCVN 10380 (L={slabLength}m)</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSlabs?.(!showSlabs)}
+                className={`p-1 rounded-md transition-colors ${showSlabs ? 'text-blue-400' : 'text-slate-600 hover:text-slate-400'}`}
+                title="Bật/tắt dải tấm bê tông và khe cắt ngang"
+              >
+                {showSlabs ? <Eye size={15} /> : <EyeOff size={15} />}
+              </button>
+            </div>
+
+            {/* Slab Labels */}
+            <div className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-slate-800/40 transition-colors">
+              <div className="flex items-center gap-2.5">
+                <div className="px-1 py-0.2 rounded bg-cyan-500/20 border border-cyan-400/40 text-[9px] font-mono font-bold text-cyan-300">
+                  S-001
+                </div>
+                <span className="text-xs font-medium text-slate-200">Nhãn mã tấm BTXM</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSlabLabels?.(!showSlabLabels)}
+                className={`p-1 rounded-md transition-colors ${showSlabLabels ? 'text-blue-400' : 'text-slate-600 hover:text-slate-400'}`}
+                title="Bật/tắt nhãn tên tấm bê tông (S-001, S-002...)"
+              >
+                {showSlabLabels ? <Eye size={15} /> : <EyeOff size={15} />}
+              </button>
+            </div>
+
             {/* Centerline */}
             <div className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-slate-800/40 transition-colors">
               <div className="flex items-center gap-2.5">
@@ -571,6 +831,168 @@ export default function Sidebar({
                 {showVertices ? <Eye size={15} /> : <EyeOff size={15} />}
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* ── Card 4: Quản lý Phân Đoạn Bay Drone (SEG-01 -> SEG-09) ── */}
+        <div className="bg-[#161c2e] border border-[#232d47] rounded-xl p-3.5 space-y-3 shadow-sm">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-slate-300">
+            <span className="flex items-center gap-1.5 text-blue-400">
+              <Navigation size={13} className="text-cyan-400" />
+              Tiến Độ Bay Drone Theo Phân Đoạn
+            </span>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
+              {completedSegments.length}/{droneSegments.length} đoạn ({Math.round((completedSegments.length / (droneSegments.length || 1)) * 100)}%)
+            </span>
+          </div>
+
+          {/* Progress Bar */}
+          <div className="w-full bg-[#0e121f] h-2 rounded-full overflow-hidden border border-[#232d47]">
+            <div
+              className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all duration-300"
+              style={{ width: `${Math.round((completedSegments.length / (droneSegments.length || 1)) * 100)}%` }}
+            />
+          </div>
+
+          {/* Quick Actions */}
+          <div className="flex items-center justify-between text-[10px]">
+            <span className="text-slate-400">Chọn trạng thái khảo sát:</span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleSelectAllSegments}
+                className="px-2 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 font-medium transition-colors"
+              >
+                Tất cả
+              </button>
+              <button
+                type="button"
+                onClick={handleDeselectAllSegments}
+                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 font-medium transition-colors"
+              >
+                Bỏ chọn
+              </button>
+            </div>
+          </div>
+
+          {/* Segment List */}
+          <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-800">
+            {droneSegments.map((seg) => {
+              const isCompleted = completedSegments.includes(seg.id)
+              return (
+                <div
+                  key={seg.id}
+                  className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                    isCompleted
+                      ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-200'
+                      : 'bg-[#0e121f] border-[#232d47] text-slate-300 hover:border-slate-600'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => toggleSegment(seg.id)}
+                      className={`transition-colors ${isCompleted ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
+                      title={isCompleted ? 'Đánh dấu chưa hoàn thành' : 'Đánh dấu đã bay xong'}
+                    >
+                      {isCompleted ? <CheckSquare size={15} /> : <Square size={15} />}
+                    </button>
+                    <div className="flex flex-col min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono font-bold text-xs text-white">{seg.id}</span>
+                        <span className={`text-[9px] px-1.5 py-0.2 rounded font-semibold ${
+                          isCompleted
+                            ? 'bg-emerald-500/20 text-emerald-300'
+                            : 'bg-slate-800 text-slate-400'
+                        }`}>
+                          {isCompleted ? 'ĐÃ BAY' : 'CHỜ BAY'}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-400 truncate">
+                        {seg.range} ({seg.length}m)
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => onFocusSegment?.(seg)}
+                    className="flex items-center gap-1 px-2 py-1 rounded bg-[#161c2e] hover:bg-blue-600 text-slate-300 hover:text-white border border-[#232d47] text-[10px] font-medium transition-all shadow-sm shrink-0"
+                    title="Định vị phân đoạn này trên bản đồ"
+                  >
+                    <Target size={11} className="text-cyan-400 group-hover:text-white" />
+                    <span>Lia tới</span>
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* ── Card 5: Bảng Thống Kê Layer Trong Bản Vẽ CAD ── */}
+        <div className="bg-[#161c2e] border border-[#232d47] rounded-xl p-3.5 space-y-3 shadow-sm">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-slate-300">
+            <span className="flex items-center gap-1.5 text-blue-400">
+              <Layers size={13} className="text-blue-400" />
+              Các Layer Trong Bản Vẽ CAD
+            </span>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-300 font-bold">
+              {filteredLayers.length} layers
+            </span>
+          </div>
+
+          {/* Search Box */}
+          <div className="relative">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={layerSearch}
+              onChange={(e) => setLayerSearch(e.target.value)}
+              placeholder="Tìm layer (vd: MEPNHUA, NHA_CUA...)"
+              className="w-full bg-[#0e121f] border border-[#2a3654] rounded-lg pl-7 pr-7 py-1.5 font-mono text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+            />
+            {layerSearch && (
+              <button
+                type="button"
+                onClick={() => setLayerSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
+          {/* Layer List */}
+          <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-800">
+            {filteredLayers.length > 0 ? (
+              filteredLayers.map((l, lIdx) => (
+                <div
+                  key={`${l.name}-${lIdx}`}
+                  className="flex items-center justify-between p-2 rounded-lg bg-[#0e121f] border border-[#232d47] hover:border-slate-600 transition-colors"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                    <span className="font-mono font-medium text-xs text-white truncate max-w-[140px]" title={l.name}>
+                      {l.name}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {l.category && (
+                      <span className={`text-[9px] px-1.5 py-0.2 rounded border font-semibold ${getCategoryColor(l.category)}`}>
+                        {l.category}
+                      </span>
+                    )}
+                    <span className="text-[10px] font-mono font-semibold text-slate-300 bg-slate-800 px-1.5 py-0.5 rounded">
+                      {l.count} đ.tượng
+                    </span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-4 text-slate-500 text-[11px]">
+                {activeLayerStats.length === 0 ? 'Nạp file CAD để xem thống kê layer' : 'Không tìm thấy layer phù hợp'}
+              </div>
+            )}
           </div>
         </div>
 

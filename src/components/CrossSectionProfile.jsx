@@ -125,24 +125,7 @@ export default function CrossSectionProfile({ geoJsonData, roadParams }) {
 
   const [selectedStationIndex, setSelectedStationIndex] = useState(0)
 
-  if (!geoJsonData || stations.length === 0) {
-    return (
-      <div
-        className="absolute inset-0 flex flex-col items-center justify-center gap-3"
-        style={{ background: '#0a0f1e', fontFamily: 'Inter, sans-serif' }}
-      >
-        <ScanLine size={44} style={{ color: '#1e293b' }} strokeWidth={1.2} />
-        <p style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>
-          Chưa có dữ liệu trắc ngang cọc lý trình
-        </p>
-        <p style={{ fontSize: '11px', color: '#334155' }}>
-          Vui lòng nạp file CAD (.dxf) từ thanh bên để hiển thị biểu đồ trắc ngang mui luyện
-        </p>
-      </div>
-    )
-  }
-
-  const activeStation = stations[selectedStationIndex] || stations[0]
+  const activeStation = stations[selectedStationIndex] || stations[0] || null
 
   // Engineering calculations based on road width & standard 2% cross-slope (TCVN)
   const roadWidth = Number(roadParams?.roadWidth) || 3.5
@@ -152,7 +135,7 @@ export default function CrossSectionProfile({ geoJsonData, roadParams }) {
   const shoulderSlope = 0.04 // 4.0%
   const slabThickness = 0.22 // 22cm BTXM
 
-  const centerZ = activeStation.elevation
+  const centerZ = activeStation?.elevation ?? 0
   const leftEdgeZ = centerZ - halfWidth * crossSlope
   const rightEdgeZ = centerZ - halfWidth * crossSlope
   const leftShoulderZ = leftEdgeZ - shoulderWidth * shoulderSlope
@@ -160,6 +143,7 @@ export default function CrossSectionProfile({ geoJsonData, roadParams }) {
 
   // Cross section data points for Recharts AreaChart
   const crossSectionData = useMemo(() => {
+    if (!activeStation) return []
     const totalHalf = halfWidth + shoulderWidth
     return [
       {
@@ -212,7 +196,7 @@ export default function CrossSectionProfile({ geoJsonData, roadParams }) {
         slope: '-4.0% (Lề)',
       },
     ]
-  }, [centerZ, halfWidth, shoulderWidth, crossSlope, shoulderSlope, slabThickness, leftEdgeZ, rightEdgeZ, leftShoulderZ, rightShoulderZ])
+  }, [activeStation, centerZ, halfWidth, shoulderWidth, crossSlope, slabThickness, leftEdgeZ, rightEdgeZ, leftShoulderZ, rightShoulderZ])
 
   // Longitudinal Profile data across all stations
   const longitudinalData = useMemo(() => {
@@ -223,6 +207,23 @@ export default function CrossSectionProfile({ geoJsonData, roadParams }) {
       elevation: Number(s.elevation.toFixed(3)),
     }))
   }, [stations])
+
+  if (!geoJsonData || stations.length === 0 || !activeStation) {
+    return (
+      <div
+        className="absolute inset-0 flex flex-col items-center justify-center gap-3"
+        style={{ background: '#0a0f1e', fontFamily: 'Inter, sans-serif' }}
+      >
+        <ScanLine size={44} style={{ color: '#1e293b' }} strokeWidth={1.2} />
+        <p style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>
+          Chưa có dữ liệu trắc ngang cọc lý trình
+        </p>
+        <p style={{ fontSize: '11px', color: '#334155' }}>
+          Vui lòng nạp file CAD (.dxf) từ thanh bên để hiển thị biểu đồ trắc ngang mui luyện
+        </p>
+      </div>
+    )
+  }
 
   const yDomainMin = Math.floor((leftShoulderZ - slabThickness - 0.2) * 10) / 10
   const yDomainMax = Math.ceil((centerZ + 0.2) * 10) / 10
