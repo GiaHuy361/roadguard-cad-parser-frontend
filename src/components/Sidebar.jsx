@@ -447,7 +447,7 @@ export default function Sidebar({
       })
     }
 
-    // Kiểm tra và bổ sung phân đoạn cho các nhánh nút giao (Đặng Thúc Vịnh / Quang Trung)
+    // Kiểm tra và bổ sung phân đoạn cho các nhánh nút giao / giao lộ phụ
     const branchFeatures = geoJsonData?.features?.filter(
       f => f.id?.startsWith('road-centerline-branch') || f.properties?.isBranch
     )

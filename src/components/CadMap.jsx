@@ -435,7 +435,7 @@ export default function CadMap({
         }
       }
 
-      // 1.4 Phân đoạn Tấm BTXM & Khe co giãn cho các nhánh nút giao (Đặng Thúc Vịnh / Quang Trung)
+      // 1.4 Phân đoạn Tấm BTXM & Khe co giãn cho các nhánh nút giao / giao lộ phụ
       if (branchCenterlines.length > 0) {
         const segIdBranch = `SEG-${String(segCount + 1).padStart(2, '0')}` // Thường là SEG-09
         const allBranchPts = []
