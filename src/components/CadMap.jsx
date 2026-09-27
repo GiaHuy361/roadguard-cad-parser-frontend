@@ -200,6 +200,8 @@ export default function CadMap({
   const mapContainerRef = useRef(null)
   const mapRef = useRef(null)
   const popupRef = useRef(null)
+  const lastFocusedTimestampRef = useRef(null)
+  const lastFittedGeoJsonRef = useRef(null)
   const [is3D, setIs3D] = useState(true)
   const [mapLoaded, setMapLoaded] = useState(false)
 
@@ -1103,7 +1105,9 @@ export default function CadMap({
 
       setupCadLayers(map, cleanGeoJson)
 
-      if (cleanGeoJson) {
+      // Chỉ fitBounds khi nạp dữ liệu CAD mới lần đầu hoặc đổi file, không fitBounds khi đổi checkbox
+      if (cleanGeoJson && geoJsonData && geoJsonData !== lastFittedGeoJsonRef.current) {
+        lastFittedGeoJsonRef.current = geoJsonData
         const bounds = computeGeoJsonBounds(cleanGeoJson)
         if (bounds) {
           map.fitBounds(bounds, {
@@ -1118,11 +1122,15 @@ export default function CadMap({
     }
 
     applyData()
-  }, [cleanGeoJson, mapLoaded, setupCadLayers])
+  }, [cleanGeoJson, mapLoaded, setupCadLayers, geoJsonData])
 
   /* ── 5.2 Lắng nghe sự kiện lia camera đến phân đoạn Drone (Focus Segment) ─ */
   useEffect(() => {
     if (!focusedSegment || !mapRef.current || !mapLoaded) return
+    // CHỈ kích hoạt khi người dùng chủ động bấm nút "Lia tới" mới (timestamp thay đổi)
+    if (!focusedSegment.timestamp || focusedSegment.timestamp === lastFocusedTimestampRef.current) return
+    lastFocusedTimestampRef.current = focusedSegment.timestamp
+
     const map = mapRef.current
     let bounds = segmentBoundsMap[focusedSegment.id]
     if (!bounds && cleanGeoJson?.features) {
@@ -1188,7 +1196,7 @@ export default function CadMap({
         icon: '⚠️',
       })
     }
-  }, [focusedSegment?.timestamp, segmentBoundsMap, mapLoaded, is3D, cleanGeoJson, completedSegments])
+  }, [focusedSegment?.timestamp, segmentBoundsMap, mapLoaded, is3D])
 
   /* ── 6. Cập nhật trạng thái hiển thị của các Layers (Toggles) ──── */
   useEffect(() => {
