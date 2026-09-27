@@ -894,7 +894,15 @@ export default function CadMap({
   useEffect(() => {
     if (!focusedSegment || !mapRef.current || !mapLoaded) return
     const map = mapRef.current
-    const bounds = segmentBoundsMap[focusedSegment.id]
+    let bounds = segmentBoundsMap[focusedSegment.id]
+    if (!bounds && cleanGeoJson?.features) {
+      const segFeatures = cleanGeoJson.features.filter(
+        f => f.properties?.segment === focusedSegment.id || f.properties?.id === focusedSegment.id
+      )
+      if (segFeatures.length > 0) {
+        bounds = computeGeoJsonBounds({ type: 'FeatureCollection', features: segFeatures })
+      }
+    }
     if (bounds) {
       map.fitBounds(bounds, {
         padding: { top: 120, bottom: 120, left: 120, right: 120 },
@@ -907,8 +915,13 @@ export default function CadMap({
       toast.success(`Đang lia camera đến phân đoạn ${focusedSegment.id} (${rangeText})`, {
         id: 'drone-focus-segment-toast',
       })
+    } else {
+      toast(`Phân đoạn ${focusedSegment.id} chưa có dữ liệu tọa độ`, {
+        id: 'drone-focus-segment-toast',
+        icon: '⚠️',
+      })
     }
-  }, [focusedSegment?.timestamp, segmentBoundsMap, mapLoaded, is3D])
+  }, [focusedSegment?.timestamp, segmentBoundsMap, mapLoaded, is3D, cleanGeoJson])
 
   /* ── 6. Cập nhật trạng thái hiển thị của các Layers (Toggles) ──── */
   useEffect(() => {
