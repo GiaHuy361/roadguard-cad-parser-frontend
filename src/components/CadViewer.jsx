@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { DxfViewer } from 'dxf-viewer'
 import * as THREE from 'three'
 import toast from 'react-hot-toast'
 import {
   ZoomIn, ZoomOut, Maximize2, RotateCcw, Layers, Eye, EyeOff,
-  Compass, FileCode, Upload, Loader2, AlertCircle, Info, Route, Crosshair, Ruler,
+  Compass, FileCode, Upload, Loader2, AlertCircle, Route, Ruler,
 } from 'lucide-react'
 
 /* ─────────────────────────────────────────────────────────────────
@@ -165,10 +165,6 @@ export default function CadViewer({ rawDxfFile, onFileLoaded, onStatsLoaded, isV
 
     viewerRef.current = viewer
     activeViewerRef.current = viewer
-
-    if (rawDxfFile && rawDxfFile !== lastLoadedFileRef.current) {
-      loadDxfFile(rawDxfFile)
-    }
 
     // Subscribe to viewer messages (warnings / errors)
     const onMessage = (evt) => {
@@ -861,7 +857,7 @@ export default function CadViewer({ rawDxfFile, onFileLoaded, onStatsLoaded, isV
         <div
           className="pointer-events-none absolute z-30 px-2.5 py-1 rounded-md bg-slate-950/85 border border-cyan-500/40 text-[10px] font-mono text-cyan-300 backdrop-blur shadow-2xl flex items-center gap-2"
           style={{
-            left: Math.min(cursorCoords.px + 14, (containerRef.current?.clientWidth || 800) - 175),
+            left: `min(${cursorCoords.px + 14}px, calc(100% - 175px))`,
             top: Math.max(cursorCoords.py - 28, 12),
           }}
         >

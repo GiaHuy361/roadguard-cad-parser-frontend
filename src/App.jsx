@@ -8,7 +8,7 @@ import { downloadExcelReport } from './utils/excelExporter'
 import {
   Map, ScanLine, Database, Compass,
   Satellite, FileSpreadsheet, Route,
-  PanelLeftOpen, CheckCircle2
+  PanelLeftOpen, CheckCircle2, Copy, Check, Download
 } from 'lucide-react'
 
 /* ─── Tab definitions ──────────────────────────────────────────── */
@@ -32,6 +32,10 @@ export default function App() {
   const [showRoadSurface, setShowRoadSurface] = useState(true)
   const [showEdges,       setShowEdges]       = useState(true)
   const [showStations,    setShowStations]    = useState(true)
+  const [showSlabs,       setShowSlabs]       = useState(true)
+  const [showSlabLabels,  setShowSlabLabels]  = useState(true)
+  const [completedSegments, setCompletedSegments] = useState(['SEG-01'])
+  const [focusedSegment,  setFocusedSegment]  = useState(null)
   const [sidebarCollapsed,setSidebarCollapsed]= useState(false)
   const [roadParams,      setRoadParams]      = useState({
     segmentLength: '100',
@@ -39,8 +43,33 @@ export default function App() {
     slabLength: '4.0',
   })
   const [activeTab,       setActiveTab]       = useState('map')
+  const [copied,          setCopied]          = useState(false)
 
   const isLive = !!(geoJsonData || analyticsData)
+
+  const handleCopyGeoJson = () => {
+    if (!geoJsonData) return
+    const text = JSON.stringify(geoJsonData, null, 2)
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      toast.success('Đã sao chép toàn bộ GeoJSON vào Clipboard!')
+      setTimeout(() => setCopied(false), 2000)
+    }).catch(() => {
+      toast.error('Không thể sao chép tự động, vui lòng bôi đen và bấm Ctrl+C')
+    })
+  }
+
+  const handleDownloadGeoJsonFile = () => {
+    if (!geoJsonData) return
+    const blob = new Blob([JSON.stringify(geoJsonData, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'roadguard-export.geojson'
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('Đã tải tệp GeoJSON!')
+  }
 
   const handleQuickExcel = async () => {
     if (!geoJsonData && !analyticsData) return
@@ -196,6 +225,13 @@ export default function App() {
           setShowEdges={setShowEdges}
           showStations={showStations}
           setShowStations={setShowStations}
+          showSlabs={showSlabs}
+          setShowSlabs={setShowSlabs}
+          showSlabLabels={showSlabLabels}
+          setShowSlabLabels={setShowSlabLabels}
+          completedSegments={completedSegments}
+          setCompletedSegments={setCompletedSegments}
+          onFocusSegment={(seg) => setFocusedSegment({ ...seg, timestamp: Date.now() })}
           roadParams={roadParams}
           setRoadParams={setRoadParams}
           collapsed={sidebarCollapsed}
@@ -239,6 +275,10 @@ export default function App() {
                 showRoadSurface={showRoadSurface}
                 showEdges={showEdges}
                 showStations={showStations}
+                showSlabs={showSlabs}
+                showSlabLabels={showSlabLabels}
+                completedSegments={completedSegments}
+                focusedSegment={focusedSegment}
                 roadParams={roadParams}
               />
             </div>
@@ -268,18 +308,60 @@ export default function App() {
 
             {/* Tab 4: GeoJSON Inspector */}
             {activeTab === 'json' && (
-              <div className="w-full h-full p-6 bg-[#0a0f1d] overflow-auto font-mono text-xs text-slate-300">
-                {geoJsonData ? (
-                  <pre className="max-w-5xl mx-auto p-4 rounded-xl bg-[#111625] border border-[#1e263d] shadow-2xl whitespace-pre-wrap break-words">
-                    {JSON.stringify(geoJsonData, null, 2)}
-                  </pre>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-3">
-                    <Database size={36} />
-                    <p className="text-sm font-medium">Chưa có dữ liệu GeoJSON</p>
-                    <p className="text-xs">Tải file CAD và bấm phân tích để xem cấu trúc không gian</p>
+              <div className="w-full h-full flex flex-col bg-[#0a0f1d] overflow-hidden select-text">
+                {/* GeoJSON Toolbar */}
+                <div className="h-11 shrink-0 bg-[#0e121f] border-b border-[#1e263d] px-6 flex items-center justify-between select-none">
+                  <div className="flex items-center gap-2.5">
+                    <Database size={15} className="text-blue-400" />
+                    <span className="text-xs font-bold text-white tracking-wide uppercase">
+                      Cấu Trúc GeoJSON (WGS84 / EPSG:4326)
+                    </span>
+                    {geoJsonData && (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                        {(JSON.stringify(geoJsonData).length / 1024).toFixed(1)} KB
+                      </span>
+                    )}
                   </div>
-                )}
+
+                  {geoJsonData && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCopyGeoJson}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-sm transition-all cursor-pointer"
+                        title="Sao chép toàn bộ mã GeoJSON"
+                      >
+                        {copied ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
+                        <span>{copied ? 'Đã Sao Chép!' : 'Sao Chép GeoJSON'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleDownloadGeoJsonFile}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#161c2e] hover:bg-[#20283e] border border-[#232d47] text-slate-200 transition-all cursor-pointer"
+                        title="Tải tệp .geojson về máy"
+                      >
+                        <Download size={14} />
+                        <span>Tải Tệp</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* GeoJSON Content Area (freely selectable and copyable) */}
+                <div className="flex-1 p-6 overflow-auto font-mono text-xs select-text">
+                  {geoJsonData ? (
+                    <pre className="max-w-5xl mx-auto p-5 rounded-xl bg-[#111625] border border-[#1e263d] shadow-2xl whitespace-pre-wrap break-words text-slate-300 select-text cursor-text leading-relaxed">
+                      {JSON.stringify(geoJsonData, null, 2)}
+                    </pre>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-3 select-none">
+                      <Database size={36} />
+                      <p className="text-sm font-medium">Chưa có dữ liệu GeoJSON</p>
+                      <p className="text-xs">Tải file CAD và bấm phân tích để xem cấu trúc không gian</p>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
