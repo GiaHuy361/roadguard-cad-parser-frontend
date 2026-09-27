@@ -209,6 +209,7 @@ export default function CadMap({
 
     const processedFeatures = []
     let mainCenterlineCoords = null
+    const branchCenterlines = []
 
     geoJsonData.features.forEach(f => {
       const geom = f.geometry
@@ -239,6 +240,14 @@ export default function CadMap({
                                Array.isArray(cleanedGeom.coordinates)
       if (isMainCenterline && !mainCenterlineCoords) {
         mainCenterlineCoords = cleanedGeom.coordinates
+      }
+
+      // Thu thập các nhánh rẽ nút giao (Centerline Branches)
+      const isBranch = (f.id?.startsWith('road-centerline-branch') || f.properties?.isBranch) &&
+                       cleanedGeom.type === 'LineString' &&
+                       Array.isArray(cleanedGeom.coordinates)
+      if (isBranch) {
+        branchCenterlines.push(cleanedGeom.coordinates)
       }
 
       // Nếu là Tim đường (Centerline), trích xuất các điểm mốc (Vertices)
@@ -421,6 +430,106 @@ export default function CadMap({
               },
             })
           }
+        }
+      }
+
+      // 1.4 Phân đoạn Tấm BTXM & Khe co giãn cho các nhánh nút giao (Đặng Thúc Vịnh / Quang Trung)
+      if (branchCenterlines.length > 0) {
+        const segIdBranch = `SEG-${String(segCount + 1).padStart(2, '0')}` // Thường là SEG-09
+        const allBranchPts = []
+
+        branchCenterlines.forEach((bCoords, bIdx) => {
+          if (!bCoords || bCoords.length < 2) return
+          const { dists: bDists, total: bTotal } = getPolylineCumulativeDistances(bCoords)
+          allBranchPts.push(...bCoords)
+
+          // Cắt tấm BTXM dọc theo từng nhánh nút giao
+          for (let d = slabL; d < bTotal; d += slabL) {
+            const { pt, dx, dy } = getInterpolatedPoint(bCoords, bDists, d)
+            const transverse = createTransverseLine(pt, dx, dy, halfW)
+            const isExpansion = (Math.round(d) % 60 < slabL) || (d >= bTotal - slabL)
+
+            processedFeatures.push({
+              type: 'Feature',
+              id: `joint-cut-branch-${bIdx}-${Math.round(d)}`,
+              properties: {
+                type: isExpansion ? 'ExpansionJoint' : 'ContractionJoint',
+                name: isExpansion ? `Khe co giãn nhánh (${Math.round(d)}m)` : `Khe uốn/co nhánh (${Math.round(d)}m)`,
+                chainage: `Nhánh ${bIdx + 1} (${Math.round(d)}m)`,
+                isExpansion,
+              },
+              geometry: {
+                type: 'LineString',
+                coordinates: transverse,
+              },
+            })
+
+            const centerDist = d - slabL / 2
+            const centerPt = getInterpolatedPoint(bCoords, bDists, centerDist).pt
+            const slabCode = `S-${String(slabCount).padStart(3, '0')}`
+            processedFeatures.push({
+              type: 'Feature',
+              id: `slab-item-${slabCount}`,
+              properties: {
+                type: 'Slab',
+                name: slabCode,
+                code: slabCode,
+                chainage: `Nhánh ${bIdx + 1} (${Math.round(centerDist)}m)`,
+                segment: segIdBranch,
+                dimensions: `${slabL}m x ${roadW}m`,
+                slabIndex: slabCount,
+              },
+              geometry: {
+                type: 'Point',
+                coordinates: centerPt,
+              },
+            })
+            slabCount++
+          }
+
+          // Dải hoàn thành bay Drone cho từng nhánh nếu phân đoạn nút giao (SEG-09) hoàn thành
+          if (completedSegments && completedSegments.includes(segIdBranch)) {
+            processedFeatures.push({
+              type: 'Feature',
+              id: `drone-completed-branch-${bIdx}`,
+              properties: {
+                type: 'DroneCompletedSegment',
+                name: `Phân đoạn ${segIdBranch} (Nhánh ${bIdx + 1})`,
+                segmentId: segIdBranch,
+              },
+              geometry: {
+                type: 'LineString',
+                coordinates: bCoords,
+              },
+            })
+          }
+
+          // Đường tuyến DroneSegment cho từng nhánh để highlight khi focus SEG-09
+          processedFeatures.push({
+            type: 'Feature',
+            id: `drone-segment-${segIdBranch}-${bIdx}`,
+            properties: {
+              type: 'DroneSegment',
+              segmentId: segIdBranch,
+              name: `Phân đoạn ${segIdBranch} - Nhánh ${bIdx + 1}`,
+              chainage: 'Nút Giao Đặng Thúc Vịnh',
+            },
+            geometry: {
+              type: 'LineString',
+              coordinates: bCoords,
+            },
+          })
+        })
+
+        if (allBranchPts.length >= 2) {
+          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+          allBranchPts.forEach(p => {
+            minX = Math.min(minX, p[0])
+            maxX = Math.max(maxX, p[0])
+            minY = Math.min(minY, p[1])
+            maxY = Math.max(maxY, p[1])
+          })
+          boundsMap[segIdBranch] = [[minX, minY], [maxX, maxY]]
         }
       }
     }

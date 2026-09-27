@@ -413,7 +413,7 @@ export default function Sidebar({
 
   // ── Drone Segments Calculation ──
   const droneSegments = useMemo(() => {
-    let totLen = 865.53
+    let totLen = 746.57
     if (geoJsonData?.totalLengthMeters && Number(geoJsonData.totalLengthMeters) > 0) {
       totLen = Number(geoJsonData.totalLengthMeters)
     } else if (geoJsonData?.features) {
@@ -446,11 +446,62 @@ export default function Sidebar({
         length: Math.round(endM - startM),
       })
     }
+
+    // Kiểm tra và bổ sung phân đoạn cho các nhánh nút giao (Đặng Thúc Vịnh / Quang Trung)
+    const branchFeatures = geoJsonData?.features?.filter(
+      f => f.id?.startsWith('road-centerline-branch') || f.properties?.isBranch
+    )
+    if (branchFeatures && branchFeatures.length > 0) {
+      let bLen = 0
+      branchFeatures.forEach(bf => {
+        const coords = bf.geometry?.coordinates
+        if (coords && coords.length >= 2) {
+          for (let k = 0; k < coords.length - 1; k++) {
+            const dx = (coords[k+1][0] - coords[k][0]) * 111320 * Math.cos(coords[k][1] * Math.PI / 180)
+            const dy = (coords[k+1][1] - coords[k][1]) * 111320
+            bLen += Math.hypot(dx, dy)
+          }
+        }
+      })
+      const finalBLen = Math.round(bLen) || 119
+      const segId = `SEG-${String(list.length + 1).padStart(2, '0')}`
+      list.push({
+        id: segId,
+        index: list.length + 1,
+        name: 'Nhánh Nút Giao Đặng Thúc Vịnh',
+        range: `Nút Giao Đặng Thúc Vịnh (${finalBLen}m)`,
+        startM: Math.round(totLen),
+        endM: Math.round(totLen + finalBLen),
+        startDist: Math.round(totLen),
+        endDist: Math.round(totLen + finalBLen),
+        length: finalBLen,
+        isBranch: true,
+      })
+    }
+
     return list
   }, [geoJsonData, analyticsData, segmentLength])
 
   const displayLength = useMemo(() => {
-    return Number(geoJsonData?.totalLengthMeters || analyticsData?.totalLengthMeters || 865.53)
+    let base = Number(geoJsonData?.totalLengthMeters || analyticsData?.totalLengthMeters || 746.57)
+    const branchFeatures = geoJsonData?.features?.filter(
+      f => f.id?.startsWith('road-centerline-branch') || f.properties?.isBranch
+    )
+    if (branchFeatures && branchFeatures.length > 0) {
+      let bLen = 0
+      branchFeatures.forEach(bf => {
+        const coords = bf.geometry?.coordinates
+        if (coords && coords.length >= 2) {
+          for (let k = 0; k < coords.length - 1; k++) {
+            const dx = (coords[k+1][0] - coords[k][0]) * 111320 * Math.cos(coords[k][1] * Math.PI / 180)
+            const dy = (coords[k+1][1] - coords[k][1]) * 111320
+            bLen += Math.hypot(dx, dy)
+          }
+        }
+      })
+      base += Math.round(bLen) || 119
+    }
+    return Number(base.toFixed(1))
   }, [geoJsonData, analyticsData])
 
   const displayWidth = useMemo(() => {
@@ -467,8 +518,8 @@ export default function Sidebar({
   }, [displayLength, slabLength])
 
   const displaySegments = useMemo(() => {
-    return Math.ceil(displayLength / (parseFloat(segmentLength) || 100))
-  }, [displayLength, segmentLength])
+    return droneSegments.length
+  }, [droneSegments])
 
   const toggleSegment = (segId) => {
     if (!setCompletedSegments) return
