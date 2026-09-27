@@ -390,7 +390,13 @@ export default function App() {
                     Chiều dài: <strong className="text-slate-200">{Number(analyticsData.totalLengthMeters || 0).toFixed(1)}m</strong>
                   </span>
                   <span>
-                    Diện tích: <strong className="text-emerald-400">{Number(analyticsData.totalAreaSqm || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })}m²</strong>
+                    Diện tích: <strong className="text-emerald-400">
+                      {Number(
+                        analyticsData.totalAreaSqm ||
+                        (Number(analyticsData.totalLengthMeters || 0) * (parseFloat(roadParams?.roadWidth) >= 5 ? parseFloat(roadParams?.roadWidth) : parseFloat(roadParams?.roadWidth || 3.5) * 2)) ||
+                        0
+                      ).toLocaleString(undefined, { maximumFractionDigits: 1 })}m²
+                    </strong>
                   </span>
                   <span>
                     Xử lý: <span className="text-slate-300">{analyticsData.processingTimeMs || 3015}ms</span>

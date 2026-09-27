@@ -350,6 +350,9 @@ export default function Sidebar({
         if (analytics && onAnalyticsLoaded) {
           if (roadResult.status === 'fulfilled' && roadResult.value?.data?.totalLengthMeters) {
             analytics.totalLengthMeters = roadResult.value.data.totalLengthMeters
+            const rawW = parseFloat(roadWidth) || 3.5
+            const w = rawW >= 5.0 ? rawW : rawW * 2.0
+            analytics.totalAreaSqm = Number((analytics.totalLengthMeters * w).toFixed(1))
             analytics.roadSegments = Math.ceil(analytics.totalLengthMeters / (parseFloat(segmentLength) || 100))
             analytics.estimatedConcreteSlabs = Math.floor(analytics.totalLengthMeters / (parseFloat(slabLength) || 4.0))
           }

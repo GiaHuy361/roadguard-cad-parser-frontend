@@ -286,9 +286,30 @@ export default function CadMap({
           id: `station-milestone-${Math.round(curD)}`,
           properties: {
             type: 'StationMilestone',
-            name: kmStr,
+            name: curD === 0 ? 'Km0+000 (Đầu tuyến)' : kmStr,
             chainage: kmStr,
             distMeters: Math.round(curD),
+          },
+          geometry: {
+            type: 'Point',
+            coordinates: pt,
+          },
+        })
+      }
+
+      // Cọc mốc kết thúc cuối tuyến (Km0+747) nếu lẻ so với bước 100m
+      if (total % 100 > 5) {
+        const { pt } = getInterpolatedPoint(mainCenterlineCoords, dists, total)
+        const kmStr = 'Km0+' + String(Math.round(total)).padStart(3, '0')
+        processedFeatures.push({
+          type: 'Feature',
+          id: `station-milestone-${Math.round(total)}`,
+          properties: {
+            type: 'StationMilestone',
+            name: `${kmStr} (Cuối tuyến)`,
+            chainage: kmStr,
+            distMeters: Math.round(total),
+            isEnd: true,
           },
           geometry: {
             type: 'Point',
@@ -364,6 +385,25 @@ export default function CadMap({
             maxY = Math.max(maxY, p[1])
           })
           boundsMap[segId] = [[minX, minY], [maxX, maxY]]
+
+          // Tính năng tuyến hình học cho từng phân đoạn Drone
+          processedFeatures.push({
+            type: 'Feature',
+            id: `drone-segment-${segId}`,
+            properties: {
+              type: 'DroneSegment',
+              segmentId: segId,
+              name: `Phân đoạn ${segId}`,
+              chainage: `Km0+${String(startD).padStart(3, '0')} - Km0+${String(Math.round(endD)).padStart(3, '0')}`,
+              startDist: startD,
+              endDist: Math.round(endD),
+              lengthMeters: Math.round(endD - startD),
+            },
+            geometry: {
+              type: 'LineString',
+              coordinates: ptsInSeg,
+            },
+          })
 
           // Nếu phân đoạn này đã bay xong thì vẽ dải neon xanh lá
           if (completedSegments && completedSegments.includes(segId)) {
@@ -607,6 +647,41 @@ export default function CadMap({
       },
     })
 
+    // 4.2D LAYER: Phân đoạn Drone đang được chọn / lia tới (Active Focused Segment)
+    map.addLayer({
+      id: 'cad-layer-drone-focused-casing',
+      type: 'line',
+      source: sourceId,
+      filter: ['all', ['==', ['get', 'type'], 'DroneSegment'], ['==', ['get', 'segmentId'], focusedSegment?.id || '']],
+      layout: {
+        visibility: 'visible',
+        'line-cap': 'round',
+        'line-join': 'round',
+      },
+      paint: {
+        'line-color': '#0284c7',      // Xanh dương đậm viền ngoài
+        'line-width': 12.0,
+        'line-opacity': 0.65,
+      },
+    })
+
+    map.addLayer({
+      id: 'cad-layer-drone-focused',
+      type: 'line',
+      source: sourceId,
+      filter: ['all', ['==', ['get', 'type'], 'DroneSegment'], ['==', ['get', 'segmentId'], focusedSegment?.id || '']],
+      layout: {
+        visibility: 'visible',
+        'line-cap': 'round',
+        'line-join': 'round',
+      },
+      paint: {
+        'line-color': '#38bdf8',      // Neon Sky Blue rực sáng báo hiệu đang chọn phân đoạn này
+        'line-width': 6.0,
+        'line-opacity': 1.0,
+      },
+    })
+
     // 4.3 LAYER: Mép đường trái / phải riêng lẻ (Road Edges - Vạch trắng liền)
     map.addLayer({
       id: 'cad-layer-edges',
@@ -653,6 +728,7 @@ export default function CadMap({
         ['!=', ['get', 'type'], 'ContractionJoint'],
         ['!=', ['get', 'type'], 'ExpansionJoint'],
         ['!=', ['get', 'type'], 'DroneCompletedSegment'],
+        ['!=', ['get', 'type'], 'DroneSegment'],
         ['!', ['in', 'tim', ['downcase', ['coalesce', ['get', 'layer'], '']]]],
       ],
       layout: {
@@ -686,6 +762,7 @@ export default function CadMap({
       ['!=', ['get', 'type'], 'ContractionJoint'],
       ['!=', ['get', 'type'], 'ExpansionJoint'],
       ['!=', ['get', 'type'], 'DroneCompletedSegment'],
+      ['!=', ['get', 'type'], 'DroneSegment'],
     ]
 
     map.addLayer({
@@ -897,12 +974,22 @@ export default function CadMap({
     let bounds = segmentBoundsMap[focusedSegment.id]
     if (!bounds && cleanGeoJson?.features) {
       const segFeatures = cleanGeoJson.features.filter(
-        f => f.properties?.segment === focusedSegment.id || f.properties?.id === focusedSegment.id
+        f => f.properties?.segment === focusedSegment.id || f.properties?.id === focusedSegment.id || f.properties?.segmentId === focusedSegment.id
       )
       if (segFeatures.length > 0) {
         bounds = computeGeoJsonBounds({ type: 'FeatureCollection', features: segFeatures })
       }
     }
+
+    // Cập nhật lớp highlight dải phân đoạn trên bản đồ
+    const segFilter = ['all', ['==', ['get', 'type'], 'DroneSegment'], ['==', ['get', 'segmentId'], focusedSegment.id]]
+    if (map.getLayer('cad-layer-drone-focused')) {
+      map.setFilter('cad-layer-drone-focused', segFilter)
+    }
+    if (map.getLayer('cad-layer-drone-focused-casing')) {
+      map.setFilter('cad-layer-drone-focused-casing', segFilter)
+    }
+
     if (bounds) {
       map.fitBounds(bounds, {
         padding: { top: 120, bottom: 120, left: 120, right: 120 },
@@ -915,13 +1002,40 @@ export default function CadMap({
       toast.success(`Đang lia camera đến phân đoạn ${focusedSegment.id} (${rangeText})`, {
         id: 'drone-focus-segment-toast',
       })
+
+      // Mở Popup thông tin trực tiếp trên bản đồ tại tâm phân đoạn
+      if (popupRef.current) popupRef.current.remove()
+      const midLng = (bounds[0][0] + bounds[1][0]) / 2
+      const midLat = (bounds[0][1] + bounds[1][1]) / 2
+      const isDone = completedSegments && completedSegments.includes(focusedSegment.id)
+      popupRef.current = new maplibregl.Popup({
+        className: 'maplibre-cad-popup',
+        closeButton: true,
+        closeOnClick: false,
+        offset: [0, -18],
+      })
+        .setLngLat([midLng, midLat])
+        .setHTML(`
+          <div style="font-family: Inter, sans-serif; color: #f8fafc; min-width: 175px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 5px;">
+              <span style="font-weight: 800; font-size: 13px; color: #38bdf8;">📍 ${focusedSegment.id}</span>
+              <span style="font-size: 10px; background: rgba(56,189,248,0.18); color: #7dd3fc; padding: 2px 6px; border-radius: 4px; font-weight: 600;">KHẢO SÁT DRONE</span>
+            </div>
+            <div style="font-size: 11px; color: #94a3b8; display: flex; flex-direction: column; gap: 3px;">
+              <div>Lý trình: <strong style="color: #ffffff;">${rangeText}</strong></div>
+              <div>Chiều dài: <strong style="color: #38bdf8;">${focusedSegment.length || 100}m</strong></div>
+              <div>Trạng thái: <strong style="color: ${isDone ? '#34d399' : '#fbbf24'};">${isDone ? '✓ Đã bay khảo sát' : '⏳ Chờ bay'}</strong></div>
+            </div>
+          </div>
+        `)
+        .addTo(map)
     } else {
       toast(`Phân đoạn ${focusedSegment.id} chưa có dữ liệu tọa độ`, {
         id: 'drone-focus-segment-toast',
         icon: '⚠️',
       })
     }
-  }, [focusedSegment?.timestamp, segmentBoundsMap, mapLoaded, is3D, cleanGeoJson])
+  }, [focusedSegment?.timestamp, segmentBoundsMap, mapLoaded, is3D, cleanGeoJson, completedSegments])
 
   /* ── 6. Cập nhật trạng thái hiển thị của các Layers (Toggles) ──── */
   useEffect(() => {
