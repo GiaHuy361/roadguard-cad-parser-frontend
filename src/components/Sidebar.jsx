@@ -348,6 +348,11 @@ export default function Sidebar({
         const featureCollection = pData?.featureCollection ?? pData
 
         if (analytics && onAnalyticsLoaded) {
+          if (roadResult.status === 'fulfilled' && roadResult.value?.data?.totalLengthMeters) {
+            analytics.totalLengthMeters = roadResult.value.data.totalLengthMeters
+            analytics.roadSegments = Math.ceil(analytics.totalLengthMeters / (parseFloat(segmentLength) || 100))
+            analytics.estimatedConcreteSlabs = Math.floor(analytics.totalLengthMeters / (parseFloat(slabLength) || 4.0))
+          }
           onAnalyticsLoaded(analytics)
         }
 
@@ -405,16 +410,16 @@ export default function Sidebar({
 
   // ── Drone Segments Calculation ──
   const droneSegments = useMemo(() => {
-    let totLen = 865.5
-    if (analyticsData?.totalLengthMeters && Number(analyticsData.totalLengthMeters) > 0) {
-      totLen = Number(analyticsData.totalLengthMeters)
-    } else if (geoJsonData?.totalLengthMeters && Number(geoJsonData.totalLengthMeters) > 0) {
+    let totLen = 865.53
+    if (geoJsonData?.totalLengthMeters && Number(geoJsonData.totalLengthMeters) > 0) {
       totLen = Number(geoJsonData.totalLengthMeters)
     } else if (geoJsonData?.features) {
       const cl = geoJsonData.features.find(f => f.id === 'road-centerline-main' || f.properties?.type === 'Centerline')
       if (cl?.properties?.totalLength) {
         totLen = Number(cl.properties.totalLength)
       }
+    } else if (analyticsData?.totalLengthMeters && Number(analyticsData.totalLengthMeters) > 0) {
+      totLen = Number(analyticsData.totalLengthMeters)
     }
 
     const segL = parseFloat(segmentLength) || 100
@@ -422,20 +427,45 @@ export default function Sidebar({
     const list = []
     for (let i = 1; i <= count; i++) {
       const segId = `SEG-${String(i).padStart(2, '0')}`
-      const startM = (i - 1) * segL
-      const endM = Math.min(i * segL, totLen)
-      const startKm = `Km0+${String(Math.round(startM)).padStart(3, '0')}`
-      const endKm = `Km0+${String(Math.round(endM)).padStart(3, '0')}`
+      const startM = Math.round((i - 1) * segL)
+      const endM = Math.round(Math.min(i * segL, totLen))
+      const startKm = `Km0+${String(startM).padStart(3, '0')}`
+      const endKm = `Km0+${String(endM).padStart(3, '0')}`
       list.push({
         id: segId,
         index: i,
         name: `Phân đoạn ${i}`,
         range: `${startKm} - ${endKm}`,
+        startM,
+        endM,
+        startDist: startM,
+        endDist: endM,
         length: Math.round(endM - startM),
       })
     }
     return list
-  }, [analyticsData, geoJsonData, segmentLength])
+  }, [geoJsonData, analyticsData, segmentLength])
+
+  const displayLength = useMemo(() => {
+    return Number(geoJsonData?.totalLengthMeters || analyticsData?.totalLengthMeters || 865.53)
+  }, [geoJsonData, analyticsData])
+
+  const displayWidth = useMemo(() => {
+    const rawW = parseFloat(roadWidth) || 3.5
+    return rawW >= 5.0 ? rawW : rawW * 2.0
+  }, [roadWidth])
+
+  const displayArea = useMemo(() => {
+    return Number((displayLength * displayWidth).toFixed(1))
+  }, [displayLength, displayWidth])
+
+  const displaySlabs = useMemo(() => {
+    return Math.floor(displayLength / (parseFloat(slabLength) || 4.0))
+  }, [displayLength, slabLength])
+
+  const displaySegments = useMemo(() => {
+    return Math.ceil(displayLength / (parseFloat(segmentLength) || 100))
+  }, [displayLength, segmentLength])
 
   const toggleSegment = (segId) => {
     if (!setCompletedSegments) return
@@ -997,7 +1027,7 @@ export default function Sidebar({
         </div>
 
         {/* ── Card 4: Engineering Analysis KPIs (When Ready) ── */}
-        {analyticsData && (
+        {(analyticsData || geoJsonData) && (
           <div className="bg-[#161c2e] border border-emerald-500/25 rounded-xl p-3.5 space-y-2.5 shadow-sm">
             <div className="flex items-center justify-between text-[11px] font-semibold text-slate-300">
               <span className="flex items-center gap-1.5 text-emerald-400">
@@ -1011,28 +1041,28 @@ export default function Sidebar({
               <div className="bg-[#0e121f] p-2.5 rounded-lg border border-[#232d47]">
                 <p className="text-[10px] text-slate-400 font-medium">Chiều dài tuyến</p>
                 <p className="font-mono font-bold text-white text-sm mt-0.5">
-                  {Number(analyticsData.totalLengthMeters || 0).toFixed(1)} m
+                  {displayLength.toFixed(1)} m
                 </p>
               </div>
 
               <div className="bg-[#0e121f] p-2.5 rounded-lg border border-[#232d47]">
                 <p className="text-[10px] text-slate-400 font-medium">Diện tích mặt</p>
                 <p className="font-mono font-bold text-emerald-400 text-sm mt-0.5">
-                  {Number(analyticsData.totalAreaSqm || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} m²
+                  {displayArea.toLocaleString(undefined, { maximumFractionDigits: 1 })} m²
                 </p>
               </div>
 
               <div className="bg-[#0e121f] p-2.5 rounded-lg border border-[#232d47]">
                 <p className="text-[10px] text-slate-400 font-medium">Số tấm BTXM</p>
                 <p className="font-mono font-bold text-cyan-300 text-sm mt-0.5">
-                  {analyticsData.estimatedConcreteSlabs || 0} tấm
+                  {displaySlabs} tấm
                 </p>
               </div>
 
               <div className="bg-[#0e121f] p-2.5 rounded-lg border border-[#232d47]">
                 <p className="text-[10px] text-slate-400 font-medium">Phân đoạn</p>
                 <p className="font-mono font-bold text-amber-300 text-sm mt-0.5">
-                  {analyticsData.roadSegments || 0} đoạn
+                  {displaySegments} đoạn
                 </p>
               </div>
             </div>

@@ -760,23 +760,25 @@ export default function CadMap({
       },
     })
 
-    // 4.7C LAYER: Nhãn mã tấm BTXM (S-001, S-002... minzoom 16.5)
+    // 4.7C LAYER: Nhãn mã tấm BTXM (S-001, S-002... minzoom 18.0)
     map.addLayer({
       id: 'cad-layer-slab-labels',
       type: 'symbol',
       source: sourceId,
       filter: ['==', ['get', 'type'], 'Slab'],
-      minzoom: 16.5,
+      minzoom: 18.0,
       layout: {
         visibility: showSlabs && showSlabLabels ? 'visible' : 'none',
         'text-field': ['get', 'name'],
         'text-size': 11,
+        'text-padding': 12,
         'text-allow-overlap': false,
+        'text-ignore-placement': false,
       },
       paint: {
-        'text-color': '#ffffff',
+        'text-color': '#67e8f9',
         'text-halo-color': '#0f172a',
-        'text-halo-width': 1.5,
+        'text-halo-width': 2.0,
       },
     })
 
@@ -901,9 +903,12 @@ export default function CadMap({
         duration: 900,
         maxZoom: 18,
       })
-      toast.success(`Đang lia camera đến phân đoạn ${focusedSegment.id} (${focusedSegment.startDist}m - ${focusedSegment.endDist}m)`)
+      const rangeText = focusedSegment.range || `${focusedSegment.startM ?? 0}m - ${focusedSegment.endM ?? 100}m`
+      toast.success(`Đang lia camera đến phân đoạn ${focusedSegment.id} (${rangeText})`, {
+        id: 'drone-focus-segment-toast',
+      })
     }
-  }, [focusedSegment, segmentBoundsMap, mapLoaded, is3D])
+  }, [focusedSegment?.timestamp, segmentBoundsMap, mapLoaded, is3D])
 
   /* ── 6. Cập nhật trạng thái hiển thị của các Layers (Toggles) ──── */
   useEffect(() => {

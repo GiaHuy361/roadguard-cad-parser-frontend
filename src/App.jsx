@@ -33,7 +33,7 @@ export default function App() {
   const [showEdges,       setShowEdges]       = useState(true)
   const [showStations,    setShowStations]    = useState(true)
   const [showSlabs,       setShowSlabs]       = useState(true)
-  const [showSlabLabels,  setShowSlabLabels]  = useState(true)
+  const [showSlabLabels,  setShowSlabLabels]  = useState(false)
   const [completedSegments, setCompletedSegments] = useState(['SEG-01'])
   const [focusedSegment,  setFocusedSegment]  = useState(null)
   const [sidebarCollapsed,setSidebarCollapsed]= useState(false)
