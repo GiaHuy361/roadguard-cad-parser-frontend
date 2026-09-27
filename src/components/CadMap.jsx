@@ -514,55 +514,11 @@ export default function CadMap({
               type: 'DroneSegment',
               segmentId: segIdBranch,
               name: `Phân đoạn ${segIdBranch} - Nhánh ${bIdx + 1}`,
-              chainage: 'Nút Giao Đặng Thúc Vịnh',
+              chainage: `Nhánh phụ ${bIdx + 1}`,
             },
             geometry: {
               type: 'LineString',
               coordinates: bCoords,
-            },
-          })
-        })
-
-        // Bổ sung các Cọc mốc lý trình / Trắc địa (StationMilestone - Cục tròn) cho SEG-09
-        // 1. Mốc hội tụ tại ngã ba nút giao
-        const forkPt = branchCenterlines[0] ? branchCenterlines[0][branchCenterlines[0].length - 1] : [105.852283, 10.887753]
-        processedFeatures.push({
-          type: 'Feature',
-          id: 'station-milestone-seg09-junction',
-          properties: {
-            type: 'StationMilestone',
-            name: 'Mốc Nút Giao ĐTV',
-            chainage: 'Nút Giao Đặng Thúc Vịnh',
-            distMeters: 0,
-            isBranch: true,
-          },
-          geometry: {
-            type: 'Point',
-            coordinates: forkPt,
-          },
-        })
-
-        // 2. Mốc tại các điểm đầu/cuối của từng nhánh rẽ (Đ.Quang Trung, Đ.Đặng Thúc Vịnh...)
-        branchCenterlines.forEach((bCoords, bIdx) => {
-          if (!bCoords || bCoords.length < 2) return
-          const outerPt = (bIdx === 0) ? bCoords[0] : bCoords[bCoords.length - 1]
-          const { total: bTotal } = getPolylineCumulativeDistances(bCoords)
-          const branchName = bIdx === 0
-            ? 'Km0+051 (Đ.Quang Trung)'
-            : (bIdx === 1 ? 'Km0+055 (Đ.Đặng Thúc Vịnh)' : `Mốc Nhánh ${bIdx + 1} (${Math.round(bTotal)}m)`)
-          processedFeatures.push({
-            type: 'Feature',
-            id: `station-milestone-seg09-branch-${bIdx}`,
-            properties: {
-              type: 'StationMilestone',
-              name: branchName,
-              chainage: branchName,
-              distMeters: Math.round(bTotal),
-              isBranch: true,
-            },
-            geometry: {
-              type: 'Point',
-              coordinates: outerPt,
             },
           })
         })

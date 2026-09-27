@@ -463,45 +463,30 @@ export default function Sidebar({
           }
         }
       })
-      const finalBLen = Math.round(bLen) || 119
-      const segId = `SEG-${String(list.length + 1).padStart(2, '0')}`
-      list.push({
-        id: segId,
-        index: list.length + 1,
-        name: 'Nhánh Nút Giao Đặng Thúc Vịnh',
-        range: `Nút Giao Đặng Thúc Vịnh (${finalBLen}m)`,
-        startM: Math.round(totLen),
-        endM: Math.round(totLen + finalBLen),
-        startDist: Math.round(totLen),
-        endDist: Math.round(totLen + finalBLen),
-        length: finalBLen,
-        isBranch: true,
-      })
+      const finalBLen = Math.round(bLen) || 0
+      if (finalBLen >= 15) {
+        const segId = `SEG-${String(list.length + 1).padStart(2, '0')}`
+        list.push({
+          id: segId,
+          index: list.length + 1,
+          name: `Phân đoạn ${list.length + 1} (Nhánh giao lộ)`,
+          range: `Nhánh giao lộ (${finalBLen}m)`,
+          startM: Math.round(totLen),
+          endM: Math.round(totLen + finalBLen),
+          startDist: Math.round(totLen),
+          endDist: Math.round(totLen + finalBLen),
+          length: finalBLen,
+          isBranch: true,
+        })
+      }
     }
 
     return list
   }, [geoJsonData, analyticsData, segmentLength])
 
   const displayLength = useMemo(() => {
-    let base = Number(geoJsonData?.totalLengthMeters || analyticsData?.totalLengthMeters || 746.57)
-    const branchFeatures = geoJsonData?.features?.filter(
-      f => f.id?.startsWith('road-centerline-branch') || f.properties?.isBranch
-    )
-    if (branchFeatures && branchFeatures.length > 0) {
-      let bLen = 0
-      branchFeatures.forEach(bf => {
-        const coords = bf.geometry?.coordinates
-        if (coords && coords.length >= 2) {
-          for (let k = 0; k < coords.length - 1; k++) {
-            const dx = (coords[k+1][0] - coords[k][0]) * 111320 * Math.cos(coords[k][1] * Math.PI / 180)
-            const dy = (coords[k+1][1] - coords[k][1]) * 111320
-            bLen += Math.hypot(dx, dy)
-          }
-        }
-      })
-      base += Math.round(bLen) || 119
-    }
-    return Number(base.toFixed(1))
+    const len = Number(analyticsData?.totalLengthMeters || geoJsonData?.totalLengthMeters || 0)
+    return Number(len.toFixed(1))
   }, [geoJsonData, analyticsData])
 
   const displayWidth = useMemo(() => {
