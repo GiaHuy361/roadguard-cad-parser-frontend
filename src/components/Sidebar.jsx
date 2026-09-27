@@ -52,12 +52,18 @@ export default function Sidebar({
   cadFile,
   collapsed,
   setCollapsed,
+  onCustomFeaturesChange,
 }) {
   const [file, setFile] = useState(cadFile || null)
   const [loading, setLoading] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [cadLayerStats, setCadLayerStats] = useState([])
   const [layerSearch, setLayerSearch] = useState('')
+  const [visibleLayers, setVisibleLayers] = useState({})
+  const [layerGeometries, setLayerGeometries] = useState({})
+  const [loadingLayers, setLoadingLayers] = useState({})
+  const [selectedCategory, setSelectedCategory] = useState('ALL')
+  const [activeCenterlineLayer, setActiveCenterlineLayer] = useState(null)
   const fileInputRef = useRef(null)
 
   useEffect(() => {
@@ -79,6 +85,11 @@ export default function Sidebar({
 
   const handleRemoveFile = () => {
     setFile(null)
+    setVisibleLayers({})
+    setLayerGeometries({})
+    setLoadingLayers({})
+    setActiveCenterlineLayer(null)
+    if (onCustomFeaturesChange) onCustomFeaturesChange([])
     if (fileInputRef.current) fileInputRef.current.value = ''
     if (onCadFileChange) onCadFileChange(null)
   }
@@ -292,13 +303,14 @@ export default function Sidebar({
     }
   }
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (overrideLayerName = null) => {
     if (!file) {
       toast.error('Vui lòng chọn file CAD (.dxf/.dwg) trước.')
       return
     }
+    const targetLayer = typeof overrideLayerName === 'string' ? overrideLayerName : activeCenterlineLayer
     setLoading(true)
-    const tid = toast.loading('Đang bóc tách tim tuyến chính & chuyển đổi tọa độ VN-2000…')
+    const tid = toast.loading(targetLayer ? `Đang dựng lại tuyến theo layer tim [${targetLayer}]…` : 'Đang bóc tách tim tuyến chính & chuyển đổi tọa độ VN-2000…')
     try {
       const roadFd = new FormData()
       roadFd.append('File', file)
@@ -306,6 +318,9 @@ export default function Sidebar({
       roadFd.append('RoadWidth', calculatedRoadWidth.toString())
       if (selectedCm) {
         roadFd.append('CentralMeridian', selectedCm.toString())
+      }
+      if (targetLayer) {
+        roadFd.append('CenterlineLayerName', targetLayer)
       }
 
       const parseFd = new FormData()
@@ -318,6 +333,9 @@ export default function Sidebar({
       parseFd.append('SegmentLength', (parseFloat(segmentLength) || 100).toString())
       parseFd.append('RoadWidth', (parseFloat(roadWidth) || 3.5).toString())
       parseFd.append('SlabLength', (parseFloat(slabLength) || 4.0).toString())
+      if (targetLayer) {
+        parseFd.append('centerlineLayerName', targetLayer)
+      }
 
       const [roadResult, parseResult] = await Promise.allSettled([
         axios.post('http://localhost:5198/api/cad/parse-road', roadFd, {
@@ -378,6 +396,77 @@ export default function Sidebar({
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleToggleLayer = async (layerName, category) => {
+    if (!file) {
+      toast.error('Vui lòng chọn file CAD trước.')
+      return
+    }
+    const isCurrentlyVisible = !!visibleLayers[layerName]
+    const nextVisible = { ...visibleLayers, [layerName]: !isCurrentlyVisible }
+    setVisibleLayers(nextVisible)
+
+    let updatedGeometries = { ...layerGeometries }
+
+    if (!isCurrentlyVisible && !updatedGeometries[layerName]) {
+      setLoadingLayers(prev => ({ ...prev, [layerName]: true }))
+      try {
+        const fd = new FormData()
+        fd.append('file', file)
+        fd.append('centerlineLayerName', layerName)
+        fd.append('targetSrid', '4326')
+        fd.append('tessellationSegments', '72')
+        if (selectedCm) {
+          fd.append('centralMeridian', selectedCm.toString())
+        }
+        const res = await axios.post('http://localhost:5198/api/cad/parse-dxf', fd)
+        const raw = res.data?.featureCollection?.features || []
+        const tagged = raw.map((f, fIdx) => ({
+          ...f,
+          id: `custom-cad-${layerName}-${fIdx}`,
+          properties: {
+            ...(f.properties || {}),
+            isCustomCadLayer: true,
+            layer: layerName,
+            category: category || 'Other',
+          }
+        }))
+        updatedGeometries[layerName] = tagged
+        setLayerGeometries(updatedGeometries)
+        toast.success(`Đã nạp ${tagged.length} đối tượng cho layer ${layerName}`)
+      } catch (err) {
+        console.error('Error fetching layer geometry:', err)
+        toast.error(`Không thể tải hình học cho layer ${layerName}`)
+        setVisibleLayers(prev => ({ ...prev, [layerName]: false }))
+        return
+      } finally {
+        setLoadingLayers(prev => ({ ...prev, [layerName]: false }))
+      }
+    }
+
+    const allActive = []
+    Object.keys(nextVisible).forEach(lyr => {
+      if (nextVisible[lyr] && updatedGeometries[lyr]) {
+        allActive.push(...updatedGeometries[lyr])
+      }
+    })
+    if (onCustomFeaturesChange) {
+      onCustomFeaturesChange(allActive)
+    }
+  }
+
+  const handleHideAllCustomLayers = () => {
+    setVisibleLayers({})
+    if (onCustomFeaturesChange) {
+      onCustomFeaturesChange([])
+    }
+    toast('Đã ẩn toàn bộ các layer CAD bổ sung.')
+  }
+
+  const handleSetCenterlineLayer = (layerName) => {
+    setActiveCenterlineLayer(layerName)
+    handleSubmit(layerName)
   }
 
   const handleDownloadExcel = async () => {
@@ -562,13 +651,38 @@ export default function Sidebar({
     return []
   }, [cadLayerStats, geoJsonData, analyticsData])
 
+  const CATEGORIES = [
+    { id: 'ALL', label: 'Tất cả' },
+    { id: 'Building', label: 'Nhà cửa' },
+    { id: 'Drainage', label: 'Thoát nước' },
+    { id: 'RoadNetwork', label: 'Tim đường' },
+    { id: 'RoadEdge', label: 'Mép đường' },
+    { id: 'Sidewalk', label: 'Vỉa hè' },
+    { id: 'Other', label: 'Khác' },
+  ]
+
+  const activeVisibleCount = useMemo(() => {
+    return Object.values(visibleLayers).filter(Boolean).length
+  }, [visibleLayers])
+
   const filteredLayers = useMemo(() => {
-    if (!layerSearch.trim()) return activeLayerStats
+    let list = activeLayerStats
+    if (selectedCategory !== 'ALL') {
+      if (selectedCategory === 'Other') {
+        const standardCats = ['Building', 'Drainage', 'RoadNetwork', 'RoadEdge', 'LeftEdge', 'Sidewalk']
+        list = list.filter(l => !standardCats.includes(l.category))
+      } else if (selectedCategory === 'RoadEdge') {
+        list = list.filter(l => l.category === 'RoadEdge' || l.category === 'LeftEdge')
+      } else {
+        list = list.filter(l => l.category === selectedCategory)
+      }
+    }
+    if (!layerSearch.trim()) return list
     const term = layerSearch.toLowerCase()
-    return activeLayerStats.filter(l => 
+    return list.filter(l => 
       l.name.toLowerCase().includes(term) || (l.category && l.category.toLowerCase().includes(term))
     )
-  }, [activeLayerStats, layerSearch])
+  }, [activeLayerStats, layerSearch, selectedCategory])
 
   const getCategoryColor = (cat) => {
     switch (cat) {
@@ -1010,16 +1124,46 @@ export default function Sidebar({
           </div>
         </div>
 
-        {/* ── Card 5: Bảng Thống Kê Layer Trong Bản Vẽ CAD ── */}
-        <div className="bg-[#161c2e] border border-[#232d47] rounded-xl p-3.5 space-y-3 shadow-sm">
+        {/* ── Card 5: Bảng Thống Kê & Bật/Tắt Layer Trong Bản Vẽ CAD ── */}
+        <div className="bg-[#161c2e] border border-[#232d47] rounded-xl p-3.5 space-y-2.5 shadow-sm">
           <div className="flex items-center justify-between text-[11px] font-semibold text-slate-300">
             <span className="flex items-center gap-1.5 text-blue-400">
               <Layers size={13} className="text-blue-400" />
-              Các Layer Trong Bản Vẽ CAD
+              Các Layer Bản Vẽ CAD
             </span>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-300 font-bold">
-              {filteredLayers.length} layers
-            </span>
+            <div className="flex items-center gap-1.5">
+              {activeVisibleCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleHideAllCustomLayers}
+                  className="text-[9px] text-amber-400 hover:text-amber-300 bg-amber-500/15 hover:bg-amber-500/25 px-1.5 py-0.5 rounded border border-amber-500/30 transition-colors font-medium"
+                  title="Ẩn tất cả các layer CAD bổ sung đang hiển thị trên bản đồ"
+                >
+                  Ẩn ({activeVisibleCount})
+                </button>
+              )}
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-300 font-bold">
+                {filteredLayers.length} layers
+              </span>
+            </div>
+          </div>
+
+          {/* Category Filter Tabs */}
+          <div className="flex items-center gap-1 overflow-x-auto pb-0.5 scrollbar-none text-[10px]">
+            {CATEGORIES.map(cat => (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setSelectedCategory(cat.id)}
+                className={`px-2 py-0.5 rounded-full shrink-0 font-medium transition-all ${
+                  selectedCategory === cat.id
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'bg-[#0e121f] text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-[#232d47]'
+                }`}
+              >
+                {cat.label}
+              </button>
+            ))}
           </div>
 
           {/* Search Box */}
@@ -1044,31 +1188,79 @@ export default function Sidebar({
           </div>
 
           {/* Layer List */}
-          <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-800">
+          <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-800">
             {filteredLayers.length > 0 ? (
-              filteredLayers.map((l, lIdx) => (
-                <div
-                  key={`${l.name}-${lIdx}`}
-                  className="flex items-center justify-between p-2 rounded-lg bg-[#0e121f] border border-[#232d47] hover:border-slate-600 transition-colors"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
-                    <span className="font-mono font-medium text-xs text-white truncate max-w-[140px]" title={l.name}>
-                      {l.name}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {l.category && (
-                      <span className={`text-[9px] px-1.5 py-0.2 rounded border font-semibold ${getCategoryColor(l.category)}`}>
-                        {l.category}
+              filteredLayers.map((l, lIdx) => {
+                const isVisible = !!visibleLayers[l.name]
+                const isLoadingLayer = !!loadingLayers[l.name]
+                const isCurrentCenterline = activeCenterlineLayer === l.name
+                return (
+                  <div
+                    key={`${l.name}-${lIdx}`}
+                    className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                      isVisible
+                        ? 'bg-cyan-950/20 border-cyan-500/40 text-cyan-200'
+                        : 'bg-[#0e121f] border-[#232d47] hover:border-slate-600'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        isVisible ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'
+                      }`} />
+                      <span className="font-mono font-medium text-xs text-white truncate max-w-[125px]" title={l.name}>
+                        {l.name}
                       </span>
-                    )}
-                    <span className="text-[10px] font-mono font-semibold text-slate-300 bg-slate-800 px-1.5 py-0.5 rounded">
-                      {l.count} đ.tượng
-                    </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {l.category && (
+                        <span className={`text-[9px] px-1.5 py-0.2 rounded border font-semibold ${getCategoryColor(l.category)}`}>
+                          {l.category}
+                        </span>
+                      )}
+                      <span className="text-[10px] font-mono font-semibold text-slate-400 bg-slate-800/80 px-1.5 py-0.5 rounded">
+                        {l.count}
+                      </span>
+
+                      {/* Toggle Visibility Eye Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleLayer(l.name, l.category)}
+                        className={`p-1 rounded transition-colors ${
+                          isVisible
+                            ? 'text-cyan-400 bg-cyan-500/20 border border-cyan-500/40 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
+                        }`}
+                        title={isVisible ? 'Ẩn layer này trên bản đồ' : 'Hiển thị đối tượng của layer này lên bản đồ vệ tinh'}
+                      >
+                        {isLoadingLayer ? (
+                          <Loader2 size={13} className="animate-spin text-cyan-400" />
+                        ) : isVisible ? (
+                          <Eye size={13} />
+                        ) : (
+                          <EyeOff size={13} />
+                        )}
+                      </button>
+
+                      {/* Set as Centerline button (for Road layers) */}
+                      {['RoadNetwork', 'RoadEdge', 'LeftEdge'].includes(l.category) && (
+                        <button
+                          type="button"
+                          onClick={() => handleSetCenterlineLayer(l.name)}
+                          className={`p-1 rounded transition-colors ${
+                            isCurrentCenterline
+                              ? 'text-amber-400 bg-amber-500/20 border border-amber-500/40'
+                              : 'text-slate-500 hover:text-amber-300 hover:bg-slate-800'
+                          }`}
+                          title={`Chọn ${l.name} làm tim tuyến chính để dựng lại mặt đường`}
+                        >
+                          <Target size={13} />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                )
+              })
             ) : (
               <div className="text-center py-4 text-slate-500 text-[11px]">
                 {activeLayerStats.length === 0 ? 'Nạp file CAD để xem thống kê layer' : 'Không tìm thấy layer phù hợp'}

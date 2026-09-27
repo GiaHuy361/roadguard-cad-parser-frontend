@@ -195,6 +195,7 @@ export default function CadMap({
   showSlabLabels = true,
   completedSegments = [],
   focusedSegment = null,
+  customCadFeatures = [],
   roadParams,
 }) {
   const mapContainerRef = useRef(null)
@@ -207,13 +208,20 @@ export default function CadMap({
 
   /* ── 1. Chuẩn hóa dữ liệu GeoJSON sang [lng, lat] & Nội suy Tấm BTXM / Cọc ── */
   const { cleanGeoJson, segmentBoundsMap } = useMemo(() => {
-    if (!geoJsonData?.features) return { cleanGeoJson: null, segmentBoundsMap: {} }
+    const hasCore = Array.isArray(geoJsonData?.features) && geoJsonData.features.length > 0
+    const hasCustom = Array.isArray(customCadFeatures) && customCadFeatures.length > 0
+    if (!hasCore && !hasCustom) return { cleanGeoJson: null, segmentBoundsMap: {} }
+
+    const allSource = [
+      ...(geoJsonData?.features || []),
+      ...(customCadFeatures || []),
+    ]
 
     const processedFeatures = []
     let mainCenterlineCoords = null
     const branchCenterlines = []
 
-    geoJsonData.features.forEach(f => {
+    allSource.forEach(f => {
       const geom = f.geometry
       if (!geom) {
         processedFeatures.push(f)
@@ -566,7 +574,7 @@ export default function CadMap({
       },
       segmentBoundsMap: boundsMap,
     }
-  }, [geoJsonData, roadParams, completedSegments])
+  }, [geoJsonData, customCadFeatures, roadParams, completedSegments])
 
   /* ── 2. Khởi tạo MapLibre GL Map Instance ─────────────────────── */
   useEffect(() => {
@@ -637,6 +645,7 @@ export default function CadMap({
     const layerIds = [
       'cad-layer-station-labels',
       'cad-layer-station-markers',
+      'cad-layer-custom-points',
       'cad-layer-drone-focused',
       'cad-layer-drone-focused-casing',
       'cad-layer-slab-labels',
@@ -646,6 +655,8 @@ export default function CadMap({
       'cad-layer-centerline',
       'cad-layer-centerline-casing',
       'cad-layer-drone-completed',
+      'cad-layer-custom-lines',
+      'cad-layer-custom-fills',
       'cad-layer-generic-lines',
       'cad-layer-edges',
       'cad-layer-islands-border',
@@ -790,6 +801,74 @@ export default function CadMap({
         'line-color': '#FFFFFF',      // Mép đường là vạch trắng liền
         'line-width': 2.0,
         'line-opacity': 0.95,
+      },
+    })
+
+    // 4.3B LAYER: Custom CAD Layers - Fills (Đa giác phân lô, nhà dân, hồ chứa...)
+    map.addLayer({
+      id: 'cad-layer-custom-fills',
+      type: 'fill',
+      source: sourceId,
+      filter: ['all',
+        ['any',
+          ['==', ['geometry-type'], 'Polygon'],
+          ['==', ['geometry-type'], 'MultiPolygon'],
+        ],
+        ['==', ['get', 'isCustomCadLayer'], true],
+      ],
+      paint: {
+        'fill-color': [
+          'match',
+          ['coalesce', ['get', 'category'], 'Other'],
+          'Building', '#c084fc',
+          'Drainage', '#06b6d4',
+          'Sidewalk', '#10b981',
+          '#94a3b8'
+        ],
+        'fill-opacity': 0.22,
+      },
+    })
+
+    // 4.3C LAYER: Custom CAD Layers - Lines (Nét vẽ hạ tầng chuyên ngành kỹ thuật)
+    map.addLayer({
+      id: 'cad-layer-custom-lines',
+      type: 'line',
+      source: sourceId,
+      filter: ['all',
+        ['any',
+          ['==', ['geometry-type'], 'LineString'],
+          ['==', ['geometry-type'], 'MultiLineString'],
+          ['==', ['geometry-type'], 'Polygon'],
+          ['==', ['geometry-type'], 'MultiPolygon'],
+        ],
+        ['==', ['get', 'isCustomCadLayer'], true],
+      ],
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round',
+      },
+      paint: {
+        'line-color': [
+          'match',
+          ['coalesce', ['get', 'category'], 'Other'],
+          'Building', '#c084fc',      // Tím hồng cho kiến trúc / nhà dân
+          'Drainage', '#06b6d4',      // Cyan cho thoát nước & cống
+          'RoadNetwork', '#f59e0b',   // Vàng hổ phách cho tim đường
+          'RoadEdge', '#e2e8f0',      // Trắng bạc cho mép đường
+          'LeftEdge', '#e2e8f0',
+          'Sidewalk', '#10b981',      // Xanh mint cho vỉa hè
+          'Survey', '#f43f5e',        // Hồng đỏ cho mốc trắc địa
+          '#94a3b8'                   // Xám cho các nét CAD khác
+        ],
+        'line-width': [
+          'match',
+          ['coalesce', ['get', 'category'], 'Other'],
+          'Building', 2.0,
+          'Drainage', 2.2,
+          'RoadNetwork', 2.5,
+          1.8
+        ],
+        'line-opacity': 0.9,
       },
     })
 
@@ -1035,6 +1114,31 @@ export default function CadMap({
       },
     })
 
+    // 4.7G LAYER: Custom CAD Layers - Points (Cọc mốc, cây xanh, chiếu sáng...)
+    map.addLayer({
+      id: 'cad-layer-custom-points',
+      type: 'circle',
+      source: sourceId,
+      filter: ['all',
+        ['==', ['geometry-type'], 'Point'],
+        ['==', ['get', 'isCustomCadLayer'], true],
+      ],
+      paint: {
+        'circle-radius': 4.5,
+        'circle-color': [
+          'match',
+          ['coalesce', ['get', 'category'], 'Other'],
+          'Building', '#c084fc',
+          'Drainage', '#06b6d4',
+          'RoadNetwork', '#f59e0b',
+          'Survey', '#f43f5e',
+          '#38bdf8'
+        ],
+        'circle-stroke-width': 1.5,
+        'circle-stroke-color': '#ffffff',
+      },
+    })
+
     // 4.8 Interactive Click Popup
     const interactiveLayers = [
       'cad-layer-surface-fill',
@@ -1046,6 +1150,9 @@ export default function CadMap({
       'cad-layer-station-markers',
       'cad-layer-drone-completed',
       'cad-layer-vertices',
+      'cad-layer-custom-lines',
+      'cad-layer-custom-fills',
+      'cad-layer-custom-points',
     ]
 
     interactiveLayers.forEach(layerId => {
@@ -1244,6 +1351,24 @@ export default function CadMap({
           <table style="width:100%;font-size:11px;border-collapse:collapse">
             <tr><td style="color:#94a3b8;padding:2px 0">Ký hiệu mốc:</td><td style="color:#38bdf8;font-weight:800;font-size:13px">${p.name}</td></tr>
             <tr><td style="color:#94a3b8;padding:2px 0">Khoảng cách từ gốc:</td><td style="color:#fbbf24;font-weight:700">${p.distMeters} m</td></tr>
+          </table>
+        </div>
+      `
+    } else if (p.isCustomCadLayer || (p.layer && !p.type)) {
+      const cat = p.category || 'CAD Layer'
+      const catColor = cat === 'Building' ? '#c084fc' : cat === 'Drainage' ? '#06b6d4' : cat === 'RoadNetwork' ? '#f59e0b' : '#38bdf8'
+      html = `
+        <div style="font-family:Inter,sans-serif;min-width:220px;color:#f1f5f9">
+          <div style="font-size:12px;font-weight:800;color:${catColor};margin-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:4px;display:flex;align-items:center;justify-content:space-between">
+            <span>🏷️ LAYER: ${p.layer}</span>
+            <span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,0.12);color:#ffffff;font-weight:600">${cat}</span>
+          </div>
+          <table style="width:100%;font-size:11px;border-collapse:collapse">
+            <tr><td style="color:#94a3b8;padding:2px 0">Đối tượng:</td><td style="color:#f8fafc;font-weight:600">${p.name || p.layer}</td></tr>
+            <tr><td style="color:#94a3b8;padding:2px 0">Hình học:</td><td style="color:#38bdf8;font-weight:600">${feature.geometry?.type}</td></tr>
+            ${p.cadEntity ? `<tr><td style="color:#94a3b8;padding:2px 0">Thực thể CAD:</td><td style="color:#e2e8f0;font-family:monospace;font-size:10px">${p.cadEntity}</td></tr>` : ''}
+            ${p.elevation ? `<tr><td style="color:#94a3b8;padding:2px 0">Cao độ (Z):</td><td style="color:#fbbf24;font-weight:600">${p.elevation} m</td></tr>` : ''}
+            <tr><td style="color:#94a3b8;padding:2px 0">Tọa độ GPS:</td><td style="color:#fbbf24;font-family:monospace;font-size:10px">${e.lngLat.lng.toFixed(6)}, ${e.lngLat.lat.toFixed(6)}</td></tr>
           </table>
         </div>
       `

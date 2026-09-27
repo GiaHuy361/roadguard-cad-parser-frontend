@@ -37,6 +37,7 @@ export default function App() {
   const [completedSegments, setCompletedSegments] = useState([])
   const [focusedSegment,  setFocusedSegment]  = useState(null)
   const [sidebarCollapsed,setSidebarCollapsed]= useState(false)
+  const [customCadFeatures, setCustomCadFeatures] = useState([])
   const [roadParams,      setRoadParams]      = useState({
     segmentLength: '100',
     roadWidth: '3.5',
@@ -52,6 +53,7 @@ export default function App() {
       setCadStats(null)
       setCompletedSegments([])
       setFocusedSegment(null)
+      setCustomCadFeatures([])
     }
   }
   const [activeTab,       setActiveTab]       = useState('map')
@@ -248,6 +250,7 @@ export default function App() {
           setRoadParams={setRoadParams}
           collapsed={sidebarCollapsed}
           setCollapsed={setSidebarCollapsed}
+          onCustomFeaturesChange={setCustomCadFeatures}
         />
 
         {/* Main View Area */}
@@ -279,6 +282,7 @@ export default function App() {
             >
               <CadMap
                 geoJsonData={geoJsonData}
+                customCadFeatures={customCadFeatures}
                 roadOverlay={roadOverlay}
                 mapStyle={mapStyle}
                 showGeometry={showGeometry}
