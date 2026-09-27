@@ -395,6 +395,8 @@ export default function CadMap({
             minY = Math.min(minY, p[1])
             maxY = Math.max(maxY, p[1])
           })
+          if (maxX - minX < 0.0003) { minX -= 0.0002; maxX += 0.0002 }
+          if (maxY - minY < 0.0003) { minY -= 0.0002; maxY += 0.0002 }
           boundsMap[segId] = [[minX, minY], [maxX, maxY]]
 
           // Tính năng tuyến hình học cho từng phân đoạn Drone
@@ -531,6 +533,8 @@ export default function CadMap({
             minY = Math.min(minY, p[1])
             maxY = Math.max(maxY, p[1])
           })
+          if (maxX - minX < 0.0003) { minX -= 0.0002; maxX += 0.0002 }
+          if (maxY - minY < 0.0003) { minY -= 0.0002; maxY += 0.0002 }
           boundsMap[segIdBranch] = [[minX, minY], [maxX, maxY]]
         }
       }
@@ -633,6 +637,8 @@ export default function CadMap({
     const layerIds = [
       'cad-layer-station-labels',
       'cad-layer-station-markers',
+      'cad-layer-drone-focused',
+      'cad-layer-drone-focused-casing',
       'cad-layer-slab-labels',
       'cad-layer-expansion-joints',
       'cad-layer-contraction-joints',
@@ -758,40 +764,6 @@ export default function CadMap({
       },
     })
 
-    // 4.2D LAYER: Phân đoạn Drone đang được chọn / lia tới (Active Focused Segment)
-    map.addLayer({
-      id: 'cad-layer-drone-focused-casing',
-      type: 'line',
-      source: sourceId,
-      filter: ['all', ['==', ['get', 'type'], 'DroneSegment'], ['==', ['get', 'segmentId'], focusedSegment?.id || '']],
-      layout: {
-        visibility: 'visible',
-        'line-cap': 'round',
-        'line-join': 'round',
-      },
-      paint: {
-        'line-color': '#0284c7',      // Xanh dương đậm viền ngoài
-        'line-width': 12.0,
-        'line-opacity': 0.65,
-      },
-    })
-
-    map.addLayer({
-      id: 'cad-layer-drone-focused',
-      type: 'line',
-      source: sourceId,
-      filter: ['all', ['==', ['get', 'type'], 'DroneSegment'], ['==', ['get', 'segmentId'], focusedSegment?.id || '']],
-      layout: {
-        visibility: 'visible',
-        'line-cap': 'round',
-        'line-join': 'round',
-      },
-      paint: {
-        'line-color': '#38bdf8',      // Neon Sky Blue rực sáng báo hiệu đang chọn phân đoạn này
-        'line-width': 6.0,
-        'line-opacity': 1.0,
-      },
-    })
 
     // 4.3 LAYER: Mép đường trái / phải riêng lẻ (Road Edges - Vạch trắng liền)
     map.addLayer({
@@ -948,7 +920,42 @@ export default function CadMap({
       },
     })
 
-    // 4.7C LAYER: Nhãn mã tấm BTXM (S-001, S-002... minzoom 18.0)
+    // 4.7C LAYER: Phân đoạn Drone đang được chọn / lia tới (Active Focused Segment - Nổi bật trên mặt đường)
+    map.addLayer({
+      id: 'cad-layer-drone-focused-casing',
+      type: 'line',
+      source: sourceId,
+      filter: ['all', ['==', ['get', 'type'], 'DroneSegment'], ['==', ['get', 'segmentId'], focusedSegment?.id || '']],
+      layout: {
+        visibility: 'visible',
+        'line-cap': 'round',
+        'line-join': 'round',
+      },
+      paint: {
+        'line-color': '#0284c7',      // Xanh dương đậm viền ngoài nổi bật
+        'line-width': 14.0,
+        'line-opacity': 0.75,
+      },
+    })
+
+    map.addLayer({
+      id: 'cad-layer-drone-focused',
+      type: 'line',
+      source: sourceId,
+      filter: ['all', ['==', ['get', 'type'], 'DroneSegment'], ['==', ['get', 'segmentId'], focusedSegment?.id || '']],
+      layout: {
+        visibility: 'visible',
+        'line-cap': 'round',
+        'line-join': 'round',
+      },
+      paint: {
+        'line-color': '#00f0ff',      // Neon Cyan rực sáng báo hiệu đang chọn phân đoạn này
+        'line-width': 7.0,
+        'line-opacity': 1.0,
+      },
+    })
+
+    // 4.7D LAYER: Nhãn mã tấm BTXM (S-001, S-002... minzoom 18.0)
     map.addLayer({
       id: 'cad-layer-slab-labels',
       type: 'symbol',
