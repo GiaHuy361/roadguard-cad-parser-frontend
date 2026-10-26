@@ -24,6 +24,37 @@ import {
   enrichGeoJsonWithEngineeringFeatures,
   normalizeRoadParams,
 } from '../utils/roadEngineeringBuilder'
+import {
+  parseWgs84CoordinateText,
+  parseAndValidateWgs84GeoJson,
+  buildStudioGeoJsonFromWgs84Import,
+} from '../utils/crsTransformEngine'
+
+const SAMPLE_WGS84_GEOJSON = JSON.stringify(
+  {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties: {
+          roadCode: 'GEO-GJ-20261025-01',
+          roadName: 'Đường mẫu kiểm thử GeoJSON',
+          note: 'Tuyến mẫu dạng chữ L dùng để kiểm thử import GeoJSON',
+        },
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [106.660172, 10.762622],
+            [106.6612, 10.762622],
+            [106.6612, 10.76345],
+          ],
+        },
+      },
+    ],
+  },
+  null,
+  2
+)
 
 export default function Sidebar({
   onDataLoaded,
@@ -52,7 +83,13 @@ export default function Sidebar({
   const [activeCenterlineLayer, setActiveCenterlineLayer] = useState(null)
   const [coordsText, setCoordsText] = useState('')
   const [axisAmbiguityAlert, setAxisAmbiguityAlert] = useState(null)
+  const [wgs84SubMode, setWgs84SubMode] = useState('geojson') // 'geojson' | 'coords'
+  const [wgs84Text, setWgs84Text] = useState('')
+  const [wgs84FileName, setWgs84FileName] = useState('')
+  const [wgs84AxisOrder, setWgs84AxisOrder] = useState('LON_LAT')
+  const [selectedWgs84CandidateId, setSelectedWgs84CandidateId] = useState('')
   const fileInputRef = useRef(null)
+  const geoJsonFileInputRef = useRef(null)
 
   useEffect(() => {
     if (cadFile && cadFile !== file) {
@@ -73,6 +110,10 @@ export default function Sidebar({
 
   const handlePresetChange = (presetId) => {
     setSelectedPresetId(presetId)
+    if (presetId === 'unconfigured') {
+      setSelectedCm('')
+      return
+    }
     const found = VN2000_REFERENCE_PRESETS.find((p) => p.id === presetId)
     if (found) {
       setSelectedCm(found.cm.toFixed(2))
@@ -373,6 +414,136 @@ export default function Sidebar({
     ]
   )
 
+  const wgs84ImportInspection = useMemo(() => {
+    if (!wgs84Text.trim()) return null
+    if (wgs84SubMode === 'geojson') {
+      return parseAndValidateWgs84GeoJson(wgs84Text)
+    }
+    const parsed = parseWgs84CoordinateText(wgs84Text, wgs84AxisOrder)
+    if (!parsed.valid) return parsed
+    const syntheticFc = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {
+            roadName: 'Tuyến nhập từ bảng tọa độ WGS-84',
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: parsed.points.map((p) => [p.lon, p.lat]),
+          },
+        },
+      ],
+    }
+    return parseAndValidateWgs84GeoJson(syntheticFc)
+  }, [wgs84Text, wgs84SubMode, wgs84AxisOrder])
+
+  const handleGeoJsonFileSelect = (e) => {
+    const selected = e.target.files?.[0]
+    if (!selected) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const content = String(ev.target?.result || '')
+      setWgs84FileName(selected.name)
+      setWgs84SubMode('geojson')
+      setWgs84Text(content)
+      toast.success(`Đã nạp tệp ${selected.name}`)
+    }
+    reader.readAsText(selected, 'utf-8')
+  }
+
+  const handleSubmitWgs84 = useCallback(
+    (overrideCandidateId = null) => {
+      if (!wgs84Text.trim()) {
+        toast.error('Vui lòng tải tệp GeoJSON hoặc nhập tọa độ WGS-84.')
+        return
+      }
+      if (!wgs84ImportInspection || !wgs84ImportInspection.valid) {
+        toast.error(
+          wgs84ImportInspection?.error || 'Dữ liệu WGS-84 / GeoJSON không hợp lệ.'
+        )
+        return
+      }
+      const normParams = normalizeRoadParams({
+        segmentLength,
+        roadWidth,
+        slabLength,
+        laneCount,
+      })
+      const crsConfigured =
+        selectedPresetId !== 'unconfigured' &&
+        Boolean(selectedCm) &&
+        Number.isFinite(parseFloat(selectedCm))
+      const crsConfig = crsConfigured
+        ? {
+            centralMeridian: parseFloat(selectedCm),
+            scaleFactor: parseFloat(scaleFactor) || 0.9999,
+            axisOrder,
+          }
+        : null
+
+      const candId =
+        typeof overrideCandidateId === 'string' && overrideCandidateId
+          ? overrideCandidateId
+          : selectedWgs84CandidateId ||
+            wgs84ImportInspection.lineStringCandidates?.[0]?.id ||
+            null
+
+      const built = buildStudioGeoJsonFromWgs84Import(
+        wgs84ImportInspection,
+        candId,
+        normParams.roadWidth,
+        crsConfig
+      )
+      if (!built) {
+        toast.error('Không thể dựng dữ liệu không gian từ đầu vào WGS-84.')
+        return
+      }
+
+      const enriched = enrichGeoJsonWithEngineeringFeatures(
+        built.featureCollection,
+        normParams,
+        [],
+        completedSegments
+      )
+      setCadLayerStats([])
+      setLastAnalyzedSource('wgs84')
+      if (onDataLoaded) {
+        onDataLoaded(enriched.geoJson || built.featureCollection)
+      }
+      if (onAnalyticsLoaded) {
+        onAnalyticsLoaded(enriched.analytics || built.analytics)
+      }
+      if (built.hasCenterline) {
+        toast.success(
+          `Đã dựng tuyến WGS-84 (${built.analytics.totalLengthMeters} m) thành công!`
+        )
+      } else {
+        toast(
+          'Đã hiển thị Polygon/Point WGS-84 lên bản đồ (Không có LineString làm tim tuyến).',
+          { icon: 'ℹ️' }
+        )
+      }
+    },
+    [
+      wgs84Text,
+      wgs84ImportInspection,
+      segmentLength,
+      roadWidth,
+      slabLength,
+      laneCount,
+      selectedPresetId,
+      selectedCm,
+      scaleFactor,
+      axisOrder,
+      selectedWgs84CandidateId,
+      completedSegments,
+      onDataLoaded,
+      onAnalyticsLoaded,
+    ]
+  )
+
   const handleToggleLayer = useCallback(
     async (layerName, category) => {
       if (!file) {
@@ -476,16 +647,28 @@ export default function Sidebar({
   )
 
   const handleRecomputeCurrentSource = useCallback(() => {
-    if (lastAnalyzedSource === 'coords' && coordsText.trim()) {
+    if (lastAnalyzedSource === 'wgs84' && wgs84Text.trim()) {
+      handleSubmitWgs84()
+    } else if (lastAnalyzedSource === 'coords' && coordsText.trim()) {
       handleSubmitCoords()
     } else if (file) {
       handleSubmit()
     } else if (coordsText.trim()) {
       handleSubmitCoords()
+    } else if (wgs84Text.trim()) {
+      handleSubmitWgs84()
     } else {
       toast.error('Chưa có nguồn dữ liệu để phân tích lại.')
     }
-  }, [lastAnalyzedSource, coordsText, file, handleSubmit, handleSubmitCoords])
+  }, [
+    lastAnalyzedSource,
+    wgs84Text,
+    coordsText,
+    file,
+    handleSubmit,
+    handleSubmitCoords,
+    handleSubmitWgs84,
+  ])
 
   // ── Single Source of Truth Engineering Computation ──
   const { metrics: ssotMetrics } = useMemo(() => {
@@ -517,9 +700,14 @@ export default function Sidebar({
         cadLayerVisibility: visibleLayers,
         loadingLayers,
         selectedCadLayer: activeCenterlineLayer || '',
-        centralMeridian: selectedCm,
+        centralMeridian: selectedPresetId === 'unconfigured' ? '' : selectedCm,
         scaleFactor,
         axisOrder,
+        sourceDataKind: lastAnalyzedSource, // 'cad' | 'coords' | 'wgs84'
+        crsConfigured:
+          selectedPresetId !== 'unconfigured' &&
+          Boolean(selectedCm) &&
+          Number.isFinite(parseFloat(selectedCm)),
         isLoading: loading,
         onToggleCadLayer: handleToggleLayer,
         onToggleAllCadLayers: handleToggleAllCadLayers,
@@ -533,9 +721,11 @@ export default function Sidebar({
     visibleLayers,
     loadingLayers,
     activeCenterlineLayer,
+    selectedPresetId,
     selectedCm,
     scaleFactor,
     axisOrder,
+    lastAnalyzedSource,
     loading,
     handleToggleLayer,
     handleToggleAllCadLayers,
@@ -585,31 +775,46 @@ export default function Sidebar({
             1. Nguồn dữ liệu đầu vào
           </div>
 
-          {/* Input Mode Segmented Switcher */}
-          <div className="grid grid-cols-2 gap-1 p-1 rounded-md bg-[#0B1220] border border-[#27384E]">
+          {/* Input Mode Segmented Switcher (CAD / VN-2000 / WGS-84 GeoJSON) */}
+          <div className="grid grid-cols-3 gap-1 p-1 rounded-md bg-[#0B1220] border border-[#27384E]">
             <button
               type="button"
               onClick={() => setInputMode('cad')}
-              className={`py-1.5 px-2 rounded text-[12.5px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+              title="Nhập bản vẽ kỹ thuật AutoCAD (.DXF)"
+              className={`py-1.5 px-1.5 rounded text-[12px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer whitespace-nowrap ${
                 inputMode === 'cad'
                   ? 'bg-[#17263C] text-[#E8EEF6]'
                   : 'text-[#A9B9CE] hover:text-[#E8EEF6]'
               }`}
             >
               <FileCode2 className="w-3.5 h-3.5 text-[#F06421] shrink-0" />
-              <span>Bản vẽ CAD (.DXF)</span>
+              <span>CAD (.DXF)</span>
             </button>
             <button
               type="button"
               onClick={() => setInputMode('coords')}
-              className={`py-1.5 px-2 rounded text-[12.5px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+              title="Nhập danh sách tọa độ phẳng VN-2000 (X Bắc, Y Đông)"
+              className={`py-1.5 px-1.5 rounded text-[12px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer whitespace-nowrap ${
                 inputMode === 'coords'
                   ? 'bg-[#17263C] text-[#E8EEF6]'
                   : 'text-[#A9B9CE] hover:text-[#E8EEF6]'
               }`}
             >
               <Navigation className="w-3.5 h-3.5 text-[#22B7C9] shrink-0" />
-              <span>Tọa độ VN-2000</span>
+              <span>VN-2000</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setInputMode('wgs84')}
+              title="Nhập tệp GeoJSON chuẩn RFC 7946 hoặc bảng tọa độ WGS-84 (Longitude, Latitude)"
+              className={`py-1.5 px-1.5 rounded text-[12px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer whitespace-nowrap ${
+                inputMode === 'wgs84'
+                  ? 'bg-[#17263C] text-[#E8EEF6]'
+                  : 'text-[#A9B9CE] hover:text-[#E8EEF6]'
+              }`}
+            >
+              <Compass className="w-3.5 h-3.5 text-[#39B58A] shrink-0" />
+              <span>WGS-84 / GeoJSON</span>
             </button>
           </div>
 
@@ -685,7 +890,7 @@ export default function Sidebar({
                 </div>
               )}
             </div>
-          ) : (
+          ) : inputMode === 'coords' ? (
             /* Mode B: Manual VN-2000 Coordinates Input */
             <div className="space-y-2">
               <div className="flex items-center justify-between text-[12.5px] text-[#A9B9CE]">
@@ -718,6 +923,170 @@ export default function Sidebar({
                 </button>
               </div>
             </div>
+          ) : null}
+
+          {inputMode === 'wgs84' && (
+            <div className="space-y-2.5">
+              {/* Sub-mode switcher: GeoJSON vs Lon/Lat Table */}
+              <div className="grid grid-cols-2 gap-1 p-0.5 rounded bg-[#0B1220] border border-[#27384E] text-[11.5px]">
+                <button
+                  type="button"
+                  onClick={() => setWgs84SubMode('geojson')}
+                  className={`py-1 px-2 rounded font-semibold cursor-pointer ${
+                    wgs84SubMode === 'geojson'
+                      ? 'bg-[#17263C] text-[#39B58A]'
+                      : 'text-[#8FA3BA] hover:text-[#E8EEF6]'
+                  }`}
+                >
+                  Tệp / Chuỗi GeoJSON
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWgs84SubMode('coords')}
+                  className={`py-1 px-2 rounded font-semibold cursor-pointer ${
+                    wgs84SubMode === 'coords'
+                      ? 'bg-[#17263C] text-[#22B7C9]'
+                      : 'text-[#8FA3BA] hover:text-[#E8EEF6]'
+                  }`}
+                >
+                  Bảng Tọa Độ (Lon, Lat)
+                </button>
+              </div>
+
+              {wgs84SubMode === 'geojson' ? (
+                <div className="space-y-2">
+                  <input
+                    ref={geoJsonFileInputRef}
+                    type="file"
+                    accept=".geojson,.json"
+                    onChange={handleGeoJsonFileSelect}
+                    className="hidden"
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => geoJsonFileInputRef.current?.click()}
+                      className="px-2.5 py-1.5 rounded bg-[#17263C] hover:bg-[#1E314D] border border-[#27384E] text-[12px] font-semibold text-[#E8EEF6] flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Upload className="w-3.5 h-3.5 text-[#39B58A]" />
+                      <span>
+                        {wgs84FileName
+                          ? `Tệp: ${wgs84FileName}`
+                          : 'Chọn tệp .geojson / .json'}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWgs84FileName('GEO-GJ-20261025-01.geojson')
+                        setWgs84Text(SAMPLE_WGS84_GEOJSON)
+                      }}
+                      className="text-[12px] text-[#39B58A] hover:underline font-semibold cursor-pointer"
+                    >
+                      Điền mẫu chuẩn
+                    </button>
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={wgs84Text}
+                    onChange={(e) => setWgs84Text(e.target.value)}
+                    placeholder='Dán nội dung GeoJSON (FeatureCollection / Feature / LineString chuẩn WGS-84 [lon, lat])...'
+                    className="w-full p-2.5 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#39B58A] focus:outline-none text-[12px] font-mono text-[#E8EEF6] resize-y select-text"
+                  />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <select
+                      value={wgs84AxisOrder}
+                      onChange={(e) => setWgs84AxisOrder(e.target.value)}
+                      className="px-2 py-1 rounded bg-[#0B1220] border border-[#27384E] text-[12px] text-[#E8EEF6]"
+                    >
+                      <option value="LON_LAT">Thứ tự: Kinh độ (Lon), Vĩ độ (Lat)</option>
+                      <option value="LAT_LON">Thứ tự: Vĩ độ (Lat), Kinh độ (Lon)</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWgs84AxisOrder('LON_LAT')
+                        setWgs84Text(
+                          '106.660172, 10.762622\n106.661200, 10.762622\n106.661200, 10.763450'
+                        )
+                      }}
+                      className="text-[12px] text-[#22B7C9] hover:underline font-semibold cursor-pointer"
+                    >
+                      Điền mẫu WGS-84
+                    </button>
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={wgs84Text}
+                    onChange={(e) => setWgs84Text(e.target.value)}
+                    placeholder={
+                      'Ví dụ (Longitude, Latitude):\n106.660172, 10.762622\n106.661200, 10.762622\n106.661200, 10.763450'
+                    }
+                    className="w-full p-2.5 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#22B7C9] focus:outline-none text-[12.5px] font-mono text-[#E8EEF6] resize-y select-text"
+                  />
+                </div>
+              )}
+
+              {/* Geometry Inspection & Multiple LineString Selector */}
+              {wgs84ImportInspection && (
+                <div className="p-2.5 rounded-md bg-[#0B1220] border border-[#27384E] space-y-2 text-[12px]">
+                  {!wgs84ImportInspection.valid ? (
+                    <div className="flex items-start gap-2 text-[#EF4444]">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>{wgs84ImportInspection.error}</span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between text-[#A9B9CE]">
+                        <span>Hình học nhận diện:</span>
+                        <span className="font-mono text-[#39B58A] font-semibold">
+                          LineString: {wgs84ImportInspection.summary.lineStringCount} | Polygon:{' '}
+                          {wgs84ImportInspection.summary.polygonCount} | Point:{' '}
+                          {wgs84ImportInspection.summary.pointCount}
+                        </span>
+                      </div>
+
+                      {wgs84ImportInspection.lineStringCandidates?.length > 1 && (
+                        <div className="space-y-1 pt-1 border-t border-[#27384E]">
+                          <label className="block text-[11.5px] font-semibold text-[#22B7C9]">
+                            Chọn LineString làm tim tuyến chính:
+                          </label>
+                          <select
+                            value={
+                              selectedWgs84CandidateId ||
+                              wgs84ImportInspection.lineStringCandidates[0]?.id
+                            }
+                            onChange={(e) => {
+                              setSelectedWgs84CandidateId(e.target.value)
+                              handleSubmitWgs84(e.target.value)
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded bg-[#111D2E] border border-[#27384E] text-[12px] text-[#E8EEF6]"
+                          >
+                            {wgs84ImportInspection.lineStringCandidates.map(
+                              (cand) => (
+                                <option key={cand.id} value={cand.id}>
+                                  {cand.name} ({cand.vertexCount} đỉnh •{' '}
+                                  {cand.lengthMeters} m)
+                                </option>
+                              )
+                            )}
+                          </select>
+                        </div>
+                      )}
+
+                      {wgs84ImportInspection.summary.lineStringCount === 0 && (
+                        <div className="p-2 rounded bg-[#F59E0B]/15 border border-[#F59E0B]/50 text-[#F59E0B] text-[11.5px] leading-snug">
+                          Tệp GeoJSON chỉ chứa Polygon/Point, không có LineString tim tuyến. Hệ thống giữ nguyên Polygon/Point trên bản đồ và không tự động biến Polygon thành tim tuyến.
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </section>
 
@@ -743,6 +1112,9 @@ export default function Sidebar({
               ))}
               <option value="custom" className="bg-[#111D2E] text-[#F06421]">
                 -- Tùy chỉnh kinh tuyến trục L₀ &amp; múi chiếu --
+              </option>
+              <option value="unconfigured" className="bg-[#111D2E] text-[#F59E0B]">
+                -- Chưa cấu hình VN-2000 (Chỉ dùng WGS-84) --
               </option>
             </select>
             <p className="text-[12px] text-[#8FA3BA] leading-snug">
@@ -968,7 +1340,16 @@ export default function Sidebar({
 
       {/* ── Sticky Primary Action Footer ── */}
       <div className="p-3.5 border-t border-[#27384E] bg-[#0B1220]">
-        {inputMode === 'coords' ? (
+        {inputMode === 'wgs84' ? (
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => handleSubmitWgs84()}
+            className="w-full py-2.5 px-4 rounded-md bg-[#F06421] hover:bg-[#FF7635] disabled:opacity-60 text-white font-semibold text-[13.5px] flex items-center justify-center gap-2 transition-colors cursor-pointer"
+          >
+            <span>Xử Lý WGS-84 / GeoJSON &amp; Dựng Tuyến</span>
+          </button>
+        ) : inputMode === 'coords' ? (
           <button
             type="button"
             disabled={loading}

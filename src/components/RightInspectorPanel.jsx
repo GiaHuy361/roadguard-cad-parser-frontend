@@ -27,6 +27,10 @@ import {
   enrichGeoJsonWithEngineeringFeatures,
   normalizeRoadParams,
 } from '../utils/roadEngineeringBuilder'
+import {
+  wgs84ToVn2000,
+  vn2000ToWgs84,
+} from '../utils/crsTransformEngine'
 
 const LAYER_CATEGORIES = {
   ALL: { label: 'Tất cả' },
@@ -75,10 +79,21 @@ export default function RightInspectorPanel({
   centralMeridian = '105.75',
   scaleFactor = '0.9999',
   axisOrder = 'AUTO',
+  sourceDataKind = 'cad',
+  crsConfigured = true,
+  coordDisplayMode = 'DUAL',
+  onCoordDisplayModeChange = null,
+  onOpenRoadGuardDraftModal = null,
   onRecomputeWidth,
   isLoading = false,
   onCollapse,
 }) {
+  const [convDirection, setConvDirection] = useState('WGS84_TO_VN2000')
+  const [convLon, setConvLon] = useState('106.68755894')
+  const [convLat, setConvLat] = useState('10.77249051')
+  const [convXNorth, setConvXNorth] = useState('1191450.25')
+  const [convYEast, setConvYEast] = useState('602340.125')
+  const [scheduleType, setScheduleType] = useState('stations') // 'stations' | 'vertices'
   const [activeSubTab, setActiveSubTab] = useState('metrics')
   const [layerSearch, setLayerSearch] = useState('')
   const [layerCategory, setLayerCategory] = useState('ALL')
@@ -98,6 +113,10 @@ export default function RightInspectorPanel({
     effectiveGeoJson?.features?.length > 0 || Number(stats.totalLengthMeters) > 0
   )
 
+  const isWgs84Source =
+    sourceDataKind === 'wgs84' || effectiveGeoJson?.sourceDataKind === 'WGS84_IMPORT'
+  const isCoordsSource =
+    sourceDataKind === 'coords' || effectiveGeoJson?.sourceDataKind === 'VN2000_COORDS'
   const isSurfaceAreaProvisional = Boolean(stats.isSurfaceAreaProvisional)
   const analyzedRoadWidth = Number(stats.analyzedRoadWidth || normalizedParams.roadWidth)
 
@@ -202,6 +221,97 @@ export default function RightInspectorPanel({
     })
   }
 
+  const isVn2000Ready =
+    crsConfigured !== false &&
+    Boolean(centralMeridian) &&
+    Number.isFinite(Number(centralMeridian)) &&
+    Number(centralMeridian) >= 100 &&
+    Number(centralMeridian) <= 112
+
+  const liveConversionResult = useMemo(() => {
+    if (!isVn2000Ready) {
+      return {
+        valid: false,
+        error:
+          'Chưa cấu hình hệ quy chiếu VN-2000 (cần kinh tuyến trục L₀ & múi chiếu).',
+      }
+    }
+    const cfg = {
+      centralMeridian: Number(centralMeridian),
+      scaleFactor: Number(scaleFactor) || 0.9999,
+    }
+    if (convDirection === 'WGS84_TO_VN2000') {
+      return wgs84ToVn2000(Number(convLon), Number(convLat), cfg)
+    }
+    return vn2000ToWgs84(Number(convYEast), Number(convXNorth), cfg)
+  }, [
+    isVn2000Ready,
+    centralMeridian,
+    scaleFactor,
+    convDirection,
+    convLon,
+    convLat,
+    convXNorth,
+    convYEast,
+  ])
+
+  const coordinateScheduleRows = useMemo(() => {
+    if (!effectiveGeoJson?.features) return []
+    const cfg = isVn2000Ready
+      ? {
+          centralMeridian: Number(centralMeridian),
+          scaleFactor: Number(scaleFactor) || 0.9999,
+        }
+      : null
+
+    if (scheduleType === 'stations') {
+      const stations = effectiveGeoJson.features.filter(
+        (f) =>
+          f.geometry?.type === 'Point' &&
+          f.properties?.type === 'StationMilestone'
+      )
+      return stations.map((st, idx) => {
+        const [lon, lat] = st.geometry.coordinates
+        const vn = cfg ? wgs84ToVn2000(lon, lat, cfg) : { valid: false }
+        return {
+          code: st.properties?.name || `Km0+${idx * 100}`,
+          distMeters: st.properties?.distMeters ?? idx * 100,
+          lon: Number(lon),
+          lat: Number(lat),
+          vn2000: vn.valid ? vn : null,
+        }
+      })
+    }
+
+    const cl =
+      effectiveGeoJson.features.find(
+        (f) =>
+          f.geometry?.type === 'LineString' &&
+          (f.properties?.type === 'Centerline' ||
+            f.properties?.layer === 'TIM_TUYEN_CHINH')
+      ) ||
+      effectiveGeoJson.features.find((f) => f.geometry?.type === 'LineString')
+    const coords = cl?.geometry?.coordinates || []
+    return coords.slice(0, 200).map((c, idx) => {
+      const lon = Number(c[0])
+      const lat = Number(c[1])
+      const vn = cfg ? wgs84ToVn2000(lon, lat, cfg) : { valid: false }
+      return {
+        code: `V-${String(idx + 1).padStart(3, '0')}`,
+        distMeters: null,
+        lon,
+        lat,
+        vn2000: vn.valid ? vn : null,
+      }
+    })
+  }, [
+    effectiveGeoJson,
+    scheduleType,
+    isVn2000Ready,
+    centralMeridian,
+    scaleFactor,
+  ])
+
   const totalLen = Number(stats.totalLengthMeters || 0)
   const nominalArea = Number(stats.nominalAreaSqm || totalLen * normalizedParams.roadWidth)
   const surfaceArea = Number(stats.surfaceAreaSqm || nominalArea)
@@ -235,7 +345,7 @@ export default function RightInspectorPanel({
       </div>
 
       {/* ── Sub-navigation Tabs ── */}
-      <div className="bg-[#0B1220]/40 border-b border-[#27384E] grid grid-cols-3 shrink-0">
+      <div className="bg-[#0B1220]/40 border-b border-[#27384E] grid grid-cols-4 shrink-0">
         <button
           type="button"
           onClick={() => setActiveSubTab('metrics')}
@@ -283,6 +393,19 @@ export default function RightInspectorPanel({
               ({dynamicSegments.length})
             </span>
           )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('coords')}
+          title="Chuyển đổi tọa độ hai chiều WGS-84 <-> VN-2000 & Bảng tọa độ cọc/đỉnh"
+          className={`flex items-center justify-center gap-1 py-2.5 px-1.5 text-[12px] font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+            activeSubTab === 'coords'
+              ? 'bg-[#17263C]/70 text-[#E8EEF6] border-b-[#22B7C9]'
+              : 'text-[#A9B9CE] hover:text-[#E8EEF6] border-b-transparent'
+          }`}
+        >
+          <span>Tọa độ</span>
         </button>
       </div>
 
@@ -351,7 +474,7 @@ export default function RightInspectorPanel({
                         <span className="text-[12.5px] font-normal text-[#22B7C9]">m</span>
                       </div>
                       <div className="mt-0.5 text-[12px] text-[#8FA3BA]">
-                        Hệ phẳng VN-2000
+                        {isWgs84Source ? 'Trắc địa WGS-84 / UTM' : 'Hệ phẳng VN-2000'}
                       </div>
                     </div>
 
@@ -450,29 +573,56 @@ export default function RightInspectorPanel({
                   </div>
                 </div>
 
-                {/* CRS & Spatial Telemetry Summary */}
+                {/* CRS & Spatial Telemetry Summary (Phản ánh đúng theo nguồn dữ liệu thực tế) */}
                 <div className="p-3 rounded-md bg-[#0B1220] border border-[#27384E] space-y-2 text-[12.5px]">
                   <div className="font-bold text-[#A9B9CE] uppercase tracking-wider text-[11.5px]">
-                    Hệ quy chiếu &amp; Không gian
+                    Hệ quy chiếu &amp; Nguồn dữ liệu
                   </div>
                   <div className="flex justify-between py-1 border-b border-[#27384E]/60">
-                    <span className="text-[#8FA3BA]">Hệ tọa độ gốc:</span>
-                    <span className="font-mono font-semibold text-[#E8EEF6] tabular-nums">
-                      VN-2000 (L₀ = {stats.centralMeridian || centralMeridian}°)
+                    <span className="text-[#8FA3BA]">Nguồn dữ liệu đầu vào:</span>
+                    <span className="font-mono font-semibold text-[#E8EEF6]">
+                      {isWgs84Source
+                        ? 'WGS-84 (EPSG:4326)'
+                        : isCoordsSource
+                        ? 'Tọa độ VN-2000'
+                        : 'Bản vẽ CAD (.DXF)'}
                     </span>
                   </div>
-                  <div className="flex justify-between py-1 border-b border-[#27384E]/60">
-                    <span className="text-[#8FA3BA]">Múi chiếu &amp; Hệ số k₀:</span>
-                    <span className="font-mono text-[#E8EEF6] tabular-nums">
-                      {Math.abs(Number(stats.scaleFactor || scaleFactor) - 0.9996) < 1e-4
-                        ? 'Múi 6° (k₀ = 0.9996)'
-                        : 'Múi 3° (k₀ = 0.9999)'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-[#27384E]/60">
-                    <span className="text-[#8FA3BA]">Hệ tọa độ xuất:</span>
-                    <span className="font-mono text-[#22B7C9]">WGS-84 (EPSG:4326)</span>
-                  </div>
+                  {isWgs84Source ? (
+                    <>
+                      <div className="flex justify-between py-1 border-b border-[#27384E]/60">
+                        <span className="text-[#8FA3BA]">Hiển thị kỹ thuật VN-2000:</span>
+                        <span className="font-mono text-[#39B58A] tabular-nums text-right">
+                          {isVn2000Ready
+                            ? `VN-2000 (L₀ = ${centralMeridian}°, ${
+                                Math.abs(Number(scaleFactor) - 0.9996) < 1e-4 ? 'Múi 6°' : 'Múi 3°'
+                              })`
+                            : 'Chưa cấu hình VN-2000 (Chỉ dùng WGS-84)'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between py-1 border-b border-[#27384E]/60">
+                        <span className="text-[#8FA3BA]">Hệ tọa độ hiển thị GIS:</span>
+                        <span className="font-mono text-[#22B7C9]">WGS-84 (EPSG:4326 - MapLibre)</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex justify-between py-1 border-b border-[#27384E]/60">
+                        <span className="text-[#8FA3BA]">Hệ tọa độ nguồn VN-2000:</span>
+                        <span className="font-mono font-semibold text-[#E8EEF6] tabular-nums text-right">
+                          VN-2000 (L₀ = {stats.centralMeridian || centralMeridian}°, {
+                            Math.abs(Number(stats.scaleFactor || scaleFactor) - 0.9996) < 1e-4
+                              ? 'Múi 6°'
+                              : 'Múi 3°'
+                          })
+                        </span>
+                      </div>
+                      <div className="flex justify-between py-1 border-b border-[#27384E]/60">
+                        <span className="text-[#8FA3BA]">Hệ tọa độ chuyển đổi hiển thị:</span>
+                        <span className="font-mono text-[#22B7C9]">WGS-84 (EPSG:4326 - MapLibre)</span>
+                      </div>
+                    </>
+                  )}
                   <div className="flex justify-between items-center py-1">
                     <span className="text-[#8FA3BA]">Dữ liệu cao độ Z:</span>
                     <span className="text-[#E8EEF6] font-medium">
@@ -523,6 +673,22 @@ export default function RightInspectorPanel({
                     <Download className="w-4 h-4 text-[#22B7C9] shrink-0" />
                     <span>Tải Dữ Liệu GeoJSON (RFC 7946)</span>
                   </button>
+
+                  {onOpenRoadGuardDraftModal && (
+                    <button
+                      type="button"
+                      onClick={onOpenRoadGuardDraftModal}
+                      disabled={isSurfaceAreaProvisional}
+                      className={`w-full py-2.5 px-4 rounded-md font-semibold text-[13px] flex items-center justify-center gap-2 transition-colors border ${
+                        isSurfaceAreaProvisional
+                          ? 'bg-[#17263C]/50 text-[#7E92AA] border-[#27384E] cursor-not-allowed opacity-75'
+                          : 'bg-[#F06421]/15 hover:bg-[#F06421]/25 text-[#E8EEF6] border-[#F06421]/70 cursor-pointer'
+                      }`}
+                    >
+                      <Compass className="w-4 h-4 text-[#F06421] shrink-0" />
+                      <span>Xuất RoadGuard Draft (.JSON)</span>
+                    </button>
+                  )}
                 </div>
               </>
             )}
@@ -874,6 +1040,280 @@ export default function RightInspectorPanel({
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ════════════ TAB 4: BIDIRECTIONAL CRS & COORDINATE SCHEDULE ════════════ */}
+        {activeSubTab === 'coords' && (
+          <div className="space-y-4 select-text">
+            {/* Coordinate Display Mode Selector */}
+            <div className="p-3 rounded-md bg-[#0B1220] border border-[#27384E] space-y-2">
+              <div className="text-[11.5px] font-bold uppercase tracking-wider text-[#A9B9CE]">
+                Chế Độ Hiển Thị Hệ Tọa Độ
+              </div>
+              <div className="text-[12px] text-[#8FA3BA] leading-snug">
+                {isWgs84Source ? (
+                  <span>
+                    Nguồn đầu vào: <strong className="text-[#38BDF8]">WGS-84 (EPSG:4326)</strong>. VN-2000 là hệ tọa độ chuyển đổi để phục vụ kiểm tra kỹ thuật.
+                  </span>
+                ) : (
+                  <span>
+                    Nguồn đầu vào: <strong className="text-[#E8EEF6]">VN-2000 (L₀={centralMeridian}°)</strong>. MapLibre hiển thị trên hệ tọa độ chuyển đổi WGS-84.
+                  </span>
+                )}
+              </div>
+              <select
+                value={coordDisplayMode}
+                onChange={(e) =>
+                  onCoordDisplayModeChange &&
+                  onCoordDisplayModeChange(e.target.value)
+                }
+                className="w-full px-2.5 py-1.5 rounded bg-[#111D2E] border border-[#27384E] text-[12.5px] text-[#E8EEF6] cursor-pointer"
+              >
+                <option value="DUAL">Song song WGS-84 &amp; VN-2000</option>
+                <option value="VN2000">Chỉ hiển thị VN-2000 (X Bắc, Y Đông)</option>
+                <option value="WGS84">Chỉ hiển thị WGS-84 (Longitude, Latitude)</option>
+              </select>
+
+              {isVn2000Ready ? (
+                <div className="text-[11.5px] font-mono text-[#39B58A]">
+                  ✓ Đang cấu hình VN-2000: L₀ = {centralMeridian}°, Múi{' '}
+                  {Math.abs(Number(scaleFactor) - 0.9996) < 1e-4 ? '6° (0.9996)' : '3° (0.9999)'}
+                </div>
+              ) : (
+                <div className="p-2 rounded bg-[#F59E0B]/15 border border-[#F59E0B]/50 text-[11.5px] text-[#F59E0B]">
+                  ⚠️ Chưa cấu hình hệ quy chiếu VN-2000 (cần kinh tuyến trục L₀ &amp; múi chiếu ở cột trái). Không thể quy đổi sang VN-2000.
+                </div>
+              )}
+            </div>
+
+            {/* Interactive Bidirectional Point Converter */}
+            <div className="p-3 rounded-md bg-[#17263C] border border-[#27384E] space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11.5px] font-bold uppercase tracking-wider text-[#22B7C9]">
+                  Chuyển Đổi Hai Chiều WGS-84 ↔ VN-2000
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-1 p-0.5 rounded bg-[#0B1220] border border-[#27384E] text-[11.5px]">
+                <button
+                  type="button"
+                  onClick={() => setConvDirection('WGS84_TO_VN2000')}
+                  className={`py-1 px-1.5 rounded font-semibold cursor-pointer ${
+                    convDirection === 'WGS84_TO_VN2000'
+                      ? 'bg-[#17263C] text-[#22B7C9]'
+                      : 'text-[#8FA3BA] hover:text-[#E8EEF6]'
+                  }`}
+                >
+                  WGS-84 → VN-2000
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConvDirection('VN2000_TO_WGS84')}
+                  className={`py-1 px-1.5 rounded font-semibold cursor-pointer ${
+                    convDirection === 'VN2000_TO_WGS84'
+                      ? 'bg-[#17263C] text-[#39B58A]'
+                      : 'text-[#8FA3BA] hover:text-[#E8EEF6]'
+                  }`}
+                >
+                  VN-2000 → WGS-84
+                </button>
+              </div>
+
+              {convDirection === 'WGS84_TO_VN2000' ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] text-[#A9B9CE] mb-0.5">
+                      Longitude (Kinh độ °)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.00001"
+                      value={convLon}
+                      onChange={(e) => setConvLon(e.target.value)}
+                      className="w-full px-2 py-1.5 rounded bg-[#0B1220] border border-[#27384E] text-[12px] font-mono text-[#E8EEF6]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-[#A9B9CE] mb-0.5">
+                      Latitude (Vĩ độ °)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.00001"
+                      value={convLat}
+                      onChange={(e) => setConvLat(e.target.value)}
+                      className="w-full px-2 py-1.5 rounded bg-[#0B1220] border border-[#27384E] text-[12px] font-mono text-[#E8EEF6]"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] text-[#A9B9CE] mb-0.5">
+                      X Bắc (Northing - m)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={convXNorth}
+                      onChange={(e) => setConvXNorth(e.target.value)}
+                      className="w-full px-2 py-1.5 rounded bg-[#0B1220] border border-[#27384E] text-[12px] font-mono text-[#E8EEF6]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-[#A9B9CE] mb-0.5">
+                      Y Đông (Easting - m)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={convYEast}
+                      onChange={(e) => setConvYEast(e.target.value)}
+                      className="w-full px-2 py-1.5 rounded bg-[#0B1220] border border-[#27384E] text-[12px] font-mono text-[#E8EEF6]"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="p-2.5 rounded bg-[#0B1220] border border-[#27384E] text-[12px] font-mono space-y-1">
+                {!liveConversionResult.valid ? (
+                  <div className="text-[#F59E0B] font-sans text-[11.5px]">
+                    {liveConversionResult.error}
+                  </div>
+                ) : convDirection === 'WGS84_TO_VN2000' ? (
+                  <>
+                    <div className="text-[11px] text-[#8FA3BA]">
+                      Kết quả VN-2000 (L₀={liveConversionResult.centralMeridian}°, Múi{' '}
+                      {liveConversionResult.zoneType}):
+                    </div>
+                    <div>
+                      X Bắc:{' '}
+                      <strong className="text-[#F59E0B]">
+                        {liveConversionResult.xNorth.toLocaleString('en-US', {
+                          minimumFractionDigits: 3,
+                          maximumFractionDigits: 3,
+                        })}{' '}
+                        m
+                      </strong>
+                    </div>
+                    <div>
+                      Y Đông:{' '}
+                      <strong className="text-[#39B58A]">
+                        {liveConversionResult.yEast.toLocaleString('en-US', {
+                          minimumFractionDigits: 3,
+                          maximumFractionDigits: 3,
+                        })}{' '}
+                        m
+                      </strong>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-[11px] text-[#8FA3BA]">
+                      Kết quả WGS-84 (EPSG:4326):
+                    </div>
+                    <div>
+                      Lon:{' '}
+                      <strong className="text-[#22B7C9]">
+                        {liveConversionResult.lon.toFixed(8)}°
+                      </strong>
+                    </div>
+                    <div>
+                      Lat:{' '}
+                      <strong className="text-[#22B7C9]">
+                        {liveConversionResult.lat.toFixed(8)}°
+                      </strong>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Station & Vertex Coordinate Schedule Table */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11.5px] font-bold uppercase tracking-wider text-[#A9B9CE]">
+                  Bảng Tọa Độ Cọc &amp; Đỉnh Tuyến
+                </span>
+                <div className="flex items-center gap-1 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setScheduleType('stations')}
+                    className={`px-2 py-0.5 rounded cursor-pointer ${
+                      scheduleType === 'stations'
+                        ? 'bg-[#22B7C9] text-[#0B1220] font-bold'
+                        : 'bg-[#17263C] text-[#A9B9CE]'
+                    }`}
+                  >
+                    Cọc Km
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScheduleType('vertices')}
+                    className={`px-2 py-0.5 rounded cursor-pointer ${
+                      scheduleType === 'vertices'
+                        ? 'bg-[#22B7C9] text-[#0B1220] font-bold'
+                        : 'bg-[#17263C] text-[#A9B9CE]'
+                    }`}
+                  >
+                    Đỉnh V
+                  </button>
+                </div>
+              </div>
+
+              {coordinateScheduleRows.length === 0 ? (
+                <div className="p-4 rounded bg-[#0B1220] border border-[#27384E] text-center text-[12px] text-[#8FA3BA]">
+                  Chưa có dữ liệu tuyến để lập bảng tọa độ.
+                </div>
+              ) : (
+                <div className="max-h-[280px] overflow-y-auto rounded border border-[#27384E] bg-[#0B1220] divide-y divide-[#27384E]/70">
+                  {coordinateScheduleRows.map((row) => (
+                    <div
+                      key={row.code}
+                      className="p-2 text-[11.5px] font-mono space-y-1 hover:bg-[#17263C]/40"
+                    >
+                      <div className="flex items-center justify-between">
+                        <strong className="text-[#E8EEF6]">{row.code}</strong>
+                        {row.distMeters !== null && (
+                          <span className="text-[#8FA3BA]">{row.distMeters} m</span>
+                        )}
+                      </div>
+                      {(coordDisplayMode === 'DUAL' ||
+                        coordDisplayMode === 'WGS84') && (
+                        <div className="text-[#C0CEDF]">
+                          WGS-84:{' '}
+                          <span className="text-[#22B7C9]">
+                            {row.lon.toFixed(7)}, {row.lat.toFixed(7)}
+                          </span>
+                        </div>
+                      )}
+                      {(coordDisplayMode === 'DUAL' ||
+                        coordDisplayMode === 'VN2000') && (
+                        <div>
+                          {row.vn2000 ? (
+                            <span className="text-[#C0CEDF]">
+                              VN-2000: X={' '}
+                              <strong className="text-[#F59E0B]">
+                                {row.vn2000.xNorth.toFixed(2)}
+                              </strong>{' '}
+                              | Y={' '}
+                              <strong className="text-[#39B58A]">
+                                {row.vn2000.yEast.toFixed(2)}
+                              </strong>
+                            </span>
+                          ) : (
+                            <span className="text-[#F59E0B]">
+                              Chưa cấu hình VN-2000
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

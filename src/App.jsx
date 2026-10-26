@@ -5,6 +5,7 @@ import RightInspectorPanel from './components/RightInspectorPanel'
 import CadMap from './components/CadMap'
 import CadViewer from './components/CadViewer'
 import CrossSectionProfile from './components/CrossSectionProfile'
+import RoadGuardDraftExportModal from './components/RoadGuardDraftExportModal'
 import { downloadExcelReport } from './utils/excelExporter'
 import {
   enrichGeoJsonWithEngineeringFeatures,
@@ -68,6 +69,8 @@ export default function App() {
     centralMeridian: '105.75',
     scaleFactor: '0.9999',
     axisOrder: 'AUTO',
+    sourceDataKind: 'cad',
+    crsConfigured: true,
     isLoading: false,
     onToggleCadLayer: null,
     onToggleAllCadLayers: null,
@@ -112,6 +115,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('map')
   const [copied, setCopied] = useState(false)
   const [showFullJson, setShowFullJson] = useState(false)
+  const [coordDisplayMode, setCoordDisplayMode] = useState('DUAL')
+  const [showRoadGuardDraftModal, setShowRoadGuardDraftModal] = useState(false)
 
   const isLive = !!(geoJsonData || analyticsData)
 
@@ -518,6 +523,14 @@ export default function App() {
                 completedSegments={completedSegments}
                 focusedSegment={focusedSegment}
                 roadParams={roadParams}
+                crsConfig={{
+                  centralMeridian: inspectorBridge.centralMeridian,
+                  scaleFactor: inspectorBridge.scaleFactor,
+                  axisOrder: inspectorBridge.axisOrder,
+                  crsConfigured: inspectorBridge.crsConfigured,
+                }}
+                coordDisplayMode={coordDisplayMode}
+                onCoordDisplayModeChange={setCoordDisplayMode}
               />
             </div>
 
@@ -614,6 +627,20 @@ export default function App() {
                         <Download size={14} className="text-[#22B7C9]" />
                         <span>Tải Tệp .geojson</span>
                       </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowRoadGuardDraftModal(true)}
+                        disabled={isSurfaceAreaProvisional}
+                        className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[12.5px] font-bold transition-all border ${
+                          isSurfaceAreaProvisional
+                            ? 'bg-[#17263C]/50 text-[#7E92AA] border-[#27384E] cursor-not-allowed'
+                            : 'bg-[#F06421] hover:bg-[#FF7635] border-[#F06421] text-white cursor-pointer'
+                        }`}
+                      >
+                        <Compass size={14} />
+                        <span>Xuất RoadGuard Draft (.json)</span>
+                      </button>
                     </div>
                   )}
                 </div>
@@ -691,6 +718,11 @@ export default function App() {
             centralMeridian={inspectorBridge.centralMeridian}
             scaleFactor={inspectorBridge.scaleFactor}
             axisOrder={inspectorBridge.axisOrder}
+            sourceDataKind={inspectorBridge.sourceDataKind}
+            crsConfigured={inspectorBridge.crsConfigured}
+            coordDisplayMode={coordDisplayMode}
+            onCoordDisplayModeChange={setCoordDisplayMode}
+            onOpenRoadGuardDraftModal={() => setShowRoadGuardDraftModal(true)}
             onRecomputeWidth={inspectorBridge.onRecomputeWidth}
             isLoading={inspectorBridge.isLoading}
             onCollapse={() => setInspectorCollapsed(true)}
@@ -702,11 +734,37 @@ export default function App() {
       <footer className="h-[30px] shrink-0 bg-[#0B1220] border-t border-[#27384E] px-4 flex items-center justify-between text-[12.5px] font-mono text-[#A9B9CE] select-none z-30">
         <div className="flex items-center gap-3.5 min-w-0 overflow-hidden">
           <span className="flex items-center gap-1.5 shrink-0">
-            <span className="w-2 h-2 rounded-full bg-[#39B58A]" />
-            <span>CRS:</span>
-            <strong className="text-[#E8EEF6] tabular-nums">
-              VN-2000 (L₀={inspectorBridge.centralMeridian}°, k₀={inspectorBridge.scaleFactor}) → EPSG:4326
-            </strong>
+            <span
+              className={`w-2 h-2 rounded-full ${
+                inspectorBridge.sourceDataKind === 'wgs84' ? 'bg-[#22B7C9]' : 'bg-[#39B58A]'
+              }`}
+            />
+            {inspectorBridge.sourceDataKind === 'wgs84' ? (
+              <span>
+                Nguồn đầu vào: <strong className="text-[#38BDF8]">WGS-84 (EPSG:4326)</strong>
+                <span className="text-[#8FA3BA] ml-1.5">
+                  • Hiển thị kỹ thuật:{' '}
+                  {inspectorBridge.crsConfigured && inspectorBridge.centralMeridian
+                    ? `VN-2000 (L₀=${inspectorBridge.centralMeridian}°, k₀=${inspectorBridge.scaleFactor})`
+                    : 'VN-2000 (Chưa cấu hình L₀)'}
+                </span>
+              </span>
+            ) : (
+              <span>
+                Nguồn đầu vào:{' '}
+                <strong className="text-[#E8EEF6]">
+                  {inspectorBridge.sourceDataKind === 'coords'
+                    ? 'Tọa độ VN-2000'
+                    : 'Bản vẽ CAD (.DXF)'}
+                  {inspectorBridge.crsConfigured && inspectorBridge.centralMeridian
+                    ? ` (L₀=${inspectorBridge.centralMeridian}°, k₀=${inspectorBridge.scaleFactor})`
+                    : ''}
+                </strong>
+                <span className="text-[#8FA3BA] ml-1.5">
+                  → Hiển thị GIS: <strong className="text-[#22B7C9]">WGS-84 (EPSG:4326)</strong>
+                </span>
+              </span>
+            )}
           </span>
           <span className="hidden xl:inline text-[#27384E]">|</span>
           <span className="hidden xl:inline shrink-0">
@@ -755,6 +813,16 @@ export default function App() {
           )}
         </div>
       </footer>
+
+      {/* ── RoadGuard Geometry Draft Export Modal ── */}
+      <RoadGuardDraftExportModal
+        isOpen={showRoadGuardDraftModal}
+        onClose={() => setShowRoadGuardDraftModal(false)}
+        geoJsonData={exportGeoJson}
+        roadParams={normalizedParams}
+        isSurfaceAreaProvisional={isSurfaceAreaProvisional}
+        analyzedRoadWidth={analyzedRoadWidth}
+      />
 
       {/* ── Toast Notifications ── */}
       <Toaster

@@ -96,6 +96,10 @@ import {
   toLngLat,
   enrichGeoJsonWithEngineeringFeatures,
 } from '../utils/roadEngineeringBuilder'
+import {
+  wgs84ToVn2000,
+  vn2000ToWgs84,
+} from '../utils/crsTransformEngine'
 
 /* ── Normalize Bounding Box to [[minLng, minLat], [maxLng, maxLat]] ─ */
 function computeGeoJsonBounds(geoJson) {
@@ -140,14 +144,104 @@ export default function CadMap({
   focusedSegment = null,
   customCadFeatures = [],
   roadParams,
+  crsConfig = {
+    centralMeridian: 105.75,
+    scaleFactor: 0.9999,
+    axisOrder: 'VN2000_XY',
+    crsConfigured: true,
+  },
+  coordDisplayMode = 'DUAL',
+  onCoordDisplayModeChange = null,
 }) {
   const mapContainerRef = useRef(null)
   const mapRef = useRef(null)
   const popupRef = useRef(null)
+  const locatorMarkerRef = useRef(null)
+  const crsConfigRef = useRef(crsConfig)
+  const coordDisplayModeRef = useRef(coordDisplayMode)
   const lastFocusedTimestampRef = useRef(null)
   const lastFittedGeoJsonRef = useRef(null)
   const [is3D, setIs3D] = useState(false)
   const [mapLoaded, setMapLoaded] = useState(false)
+  const [showLocator, setShowLocator] = useState(false)
+  const [locatorSystem, setLocatorSystem] = useState('VN2000') // 'VN2000' | 'WGS84'
+  const [locatorXNorth, setLocatorXNorth] = useState('1190372.69')
+  const [locatorYEast, setLocatorYEast] = useState('594058.50')
+  const [locatorLon, setLocatorLon] = useState('106.660172')
+  const [locatorLat, setLocatorLat] = useState('10.762622')
+  const [lastInspectedPoint, setLastInspectedPoint] = useState(null)
+
+  useEffect(() => {
+    crsConfigRef.current = crsConfig
+  }, [crsConfig])
+
+  useEffect(() => {
+    coordDisplayModeRef.current = coordDisplayMode
+  }, [coordDisplayMode])
+
+  const buildDualCrsPopupSection = useCallback((lng, lat) => {
+    const cfg = crsConfigRef.current
+    const mode = coordDisplayModeRef.current || 'DUAL'
+    const isConfigured =
+      cfg?.crsConfigured !== false &&
+      Number.isFinite(Number(cfg?.centralMeridian)) &&
+      Number(cfg?.centralMeridian) >= 100 &&
+      Number(cfg?.centralMeridian) <= 112
+
+    const vnRes = isConfigured
+      ? wgs84ToVn2000(lng, lat, {
+          centralMeridian: Number(cfg.centralMeridian),
+          scaleFactor: Number(cfg.scaleFactor) || 0.9999,
+        })
+      : { valid: false }
+
+    const showWgs = mode === 'DUAL' || mode === 'WGS84'
+    const showVn = mode === 'DUAL' || mode === 'VN2000'
+
+    let wgsHtml = ''
+    if (showWgs) {
+      wgsHtml = `
+        <div style="margin-top:6px;padding-top:5px;border-top:1px solid #27384e">
+          <div style="font-size:10.5px;font-weight:700;color:#22b7c9;text-transform:uppercase;margin-bottom:2px">
+            Tọa độ WGS-84 (EPSG:4326)
+          </div>
+          <div style="font-family:monospace;font-size:11.5px;color:#e8eef6">
+            Lon: <strong style="color:#38bdf8">${Number(lng).toFixed(8)}°</strong> | Lat: <strong style="color:#38bdf8">${Number(lat).toFixed(8)}°</strong>
+          </div>
+        </div>
+      `
+    }
+
+    let vnHtml = ''
+    if (showVn) {
+      if (vnRes.valid) {
+        vnHtml = `
+          <div style="margin-top:6px;padding-top:5px;border-top:1px solid #27384e">
+            <div style="font-size:10.5px;font-weight:700;color:#39b58a;text-transform:uppercase;margin-bottom:2px">
+              Tọa độ VN-2000 (L₀=${vnRes.centralMeridian}°, Múi ${vnRes.zoneType})
+            </div>
+            <div style="font-family:monospace;font-size:11.5px;color:#e8eef6">
+              X Bắc: <strong style="color:#fbbf24">${vnRes.xNorth.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} m</strong><br/>
+              Y Đông: <strong style="color:#34d399">${vnRes.yEast.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} m</strong>
+            </div>
+            <div style="font-size:10px;color:#94a3b8;margin-top:2px">
+              Datum: MONRE 7-param Helmert (k₀=${vnRes.scaleFactor})
+            </div>
+          </div>
+        `
+      } else {
+        vnHtml = `
+          <div style="margin-top:6px;padding-top:5px;border-top:1px solid #27384e">
+            <div style="font-size:11px;color:#f59e0b;font-weight:600">
+              ⚠️ Chưa cấu hình hệ quy chiếu VN-2000 (cần kinh tuyến trục L₀ &amp; múi chiếu) — Không thể quy đổi sang VN-2000.
+            </div>
+          </div>
+        `
+      }
+    }
+
+    return wgsHtml + vnHtml
+  }, [])
 
   /* ── 1. Chuẩn hóa dữ liệu GeoJSON sang [lng, lat] & Nội suy Tấm BTXM / Cọc (Single Source of Truth) ── */
   const { cleanGeoJson, segmentBoundsMap } = useMemo(() => {
@@ -997,12 +1091,130 @@ export default function CadMap({
       `
     }
 
+    const dualCrsSection = buildDualCrsPopupSection(e.lngLat.lng, e.lngLat.lat)
+    const cfg = crsConfigRef.current
+    const isCfg =
+      cfg?.crsConfigured !== false &&
+      Number.isFinite(Number(cfg?.centralMeridian)) &&
+      Number(cfg?.centralMeridian) >= 100
+    const vnPt = isCfg
+      ? wgs84ToVn2000(e.lngLat.lng, e.lngLat.lat, {
+          centralMeridian: Number(cfg.centralMeridian),
+          scaleFactor: Number(cfg.scaleFactor) || 0.9999,
+        })
+      : { valid: false }
+
+    setLastInspectedPoint({
+      label: p.name || p.code || p.layer || 'Điểm trên tuyến',
+      lon: Number(e.lngLat.lng),
+      lat: Number(e.lngLat.lat),
+      vn2000: vnPt.valid ? vnPt : null,
+      crsConfigured: isCfg,
+    })
+
     if (popupRef.current) popupRef.current.remove()
 
-    popupRef.current = new maplibregl.Popup({ className: 'maplibre-cad-popup', maxWidth: '340px' })
+    popupRef.current = new maplibregl.Popup({ className: 'maplibre-cad-popup', maxWidth: '360px' })
       .setLngLat(e.lngLat)
-      .setHTML(html)
+      .setHTML(html + dualCrsSection)
       .addTo(mapRef.current)
+  }
+
+  /* ── 7.5 Định vị điểm theo tọa độ VN-2000 hoặc WGS-84 trên MapLibre ─ */
+  const handleLocateCoordinate = () => {
+    const map = mapRef.current
+    if (!map) return
+
+    let targetLon = null
+    let targetLat = null
+    let titleLabel = ''
+
+    if (locatorSystem === 'VN2000') {
+      const cfg = crsConfigRef.current
+      const isCfg =
+        cfg?.crsConfigured !== false &&
+        Number.isFinite(Number(cfg?.centralMeridian)) &&
+        Number(cfg?.centralMeridian) >= 100
+      if (!isCfg) {
+        toast.error(
+          'Chưa cấu hình hệ quy chiếu VN-2000 (Kinh tuyến trục L₀ & Múi chiếu). Vui lòng cấu hình ở cột trái trước khi định vị tọa độ VN-2000.'
+        )
+        return
+      }
+      const xNorth = parseFloat(locatorXNorth)
+      const yEast = parseFloat(locatorYEast)
+      const res = vn2000ToWgs84(yEast, xNorth, {
+        centralMeridian: Number(cfg.centralMeridian),
+        scaleFactor: Number(cfg.scaleFactor) || 0.9999,
+      })
+      if (!res.valid) {
+        toast.error(res.error || 'Tọa độ VN-2000 không hợp lệ.')
+        return
+      }
+      targetLon = res.lon
+      targetLat = res.lat
+      titleLabel = `ĐIỂM ĐỊNH VỊ VN-2000`
+    } else {
+      const lon = parseFloat(locatorLon)
+      const lat = parseFloat(locatorLat)
+      if (!Number.isFinite(lon) || !Number.isFinite(lat) || Math.abs(lon) > 180 || Math.abs(lat) > 90) {
+        toast.error('Tọa độ WGS-84 (Longitude, Latitude) không hợp lệ.')
+        return
+      }
+      targetLon = lon
+      targetLat = lat
+      titleLabel = `ĐIỂM ĐỊNH VỊ WGS-84`
+    }
+
+    // Luôn truyền [longitude, latitude] chuẩn WGS-84 vào MapLibre
+    map.flyTo({
+      center: [targetLon, targetLat],
+      zoom: Math.max(map.getZoom(), 17),
+      duration: 750,
+    })
+
+    if (locatorMarkerRef.current) {
+      locatorMarkerRef.current.remove()
+    }
+    locatorMarkerRef.current = new maplibregl.Marker({ color: '#F06421' })
+      .setLngLat([targetLon, targetLat])
+      .addTo(map)
+
+    const dualSection = buildDualCrsPopupSection(targetLon, targetLat)
+    const popupHtml = `
+      <div style="font-family:Inter,sans-serif;min-width:240px;color:#f1f5f9">
+        <div style="font-size:12.5px;font-weight:700;color:#f06421;margin-bottom:4px">
+          ${titleLabel}
+        </div>
+        ${dualSection}
+      </div>
+    `
+    if (popupRef.current) popupRef.current.remove()
+    popupRef.current = new maplibregl.Popup({ className: 'maplibre-cad-popup', maxWidth: '360px' })
+      .setLngLat([targetLon, targetLat])
+      .setHTML(popupHtml)
+      .addTo(map)
+
+    const cfg = crsConfigRef.current
+    const isCfg =
+      cfg?.crsConfigured !== false &&
+      Number.isFinite(Number(cfg?.centralMeridian)) &&
+      Number(cfg?.centralMeridian) >= 100
+    const vnPt = isCfg
+      ? wgs84ToVn2000(targetLon, targetLat, {
+          centralMeridian: Number(cfg.centralMeridian),
+          scaleFactor: Number(cfg.scaleFactor) || 0.9999,
+        })
+      : { valid: false }
+
+    setLastInspectedPoint({
+      label: titleLabel,
+      lon: targetLon,
+      lat: targetLat,
+      vn2000: vnPt.valid ? vnPt : null,
+      crsConfigured: isCfg,
+    })
+    toast.success('Đã định vị điểm trên bản đồ MapLibre!')
   }
 
   /* ── 8. Chuyển đổi góc nhìn 2D / 3D Tilt ───────────────────────── */
@@ -1044,8 +1256,38 @@ export default function CadMap({
       {/* ── MapLibre WebGL Canvas Container ─────────────────────── */}
       <div ref={mapContainerRef} className="w-full h-full" />
 
-      {/* ── 3D View & Focus Controls Toolbar (Clear of MapLibre NavControl) ── */}
-      <div className="absolute top-3 right-14 z-10 flex items-center gap-2">
+      {/* ── 3D View, Coordinate Display Mode & VN-2000 Locator Toolbar ── */}
+      <div className="absolute top-3 right-14 z-10 flex flex-wrap items-center gap-2">
+        {/* Chế độ hiển thị hệ tọa độ trên MapLibre */}
+        <select
+          value={coordDisplayMode}
+          onChange={(e) =>
+            onCoordDisplayModeChange && onCoordDisplayModeChange(e.target.value)
+          }
+          title="Chế độ hiển thị tọa độ khi tra cứu điểm trên bản đồ"
+          aria-label="Chế độ hiển thị tọa độ khi tra cứu điểm trên bản đồ"
+          className="px-2.5 py-1.5 rounded-md bg-[#111D2E] border border-[#27384E] text-[12px] font-semibold text-[#E8EEF6] shadow-md cursor-pointer focus:outline-none focus:border-[#22B7C9]"
+        >
+          <option value="DUAL">Tọa độ: Song song WGS-84 &amp; VN-2000</option>
+          <option value="VN2000">Tọa độ: Chỉ VN-2000 (X Bắc, Y Đông)</option>
+          <option value="WGS84">Tọa độ: Chỉ WGS-84 (Lon, Lat)</option>
+        </select>
+
+        {/* Nút mở hộp thoại Định vị tọa độ VN-2000 / WGS-84 */}
+        <button
+          type="button"
+          onClick={() => setShowLocator((v) => !v)}
+          title="Tìm kiếm và định vị điểm theo tọa độ VN-2000 hoặc WGS-84 trên bản đồ"
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12.5px] font-semibold transition-colors cursor-pointer select-none border shadow-md ${
+            showLocator
+              ? 'bg-[#17263C] border-[#22B7C9] text-[#22B7C9]'
+              : 'bg-[#111D2E] border-[#27384E] text-[#E8EEF6] hover:bg-[#17263C]'
+          }`}
+        >
+          <Compass size={15} className="text-[#22B7C9]" />
+          <span>Tra cứu tọa độ</span>
+        </button>
+
         {/* Nút Định vị về toàn tuyến (Focus Road Extent) */}
         <button
           type="button"
@@ -1072,6 +1314,182 @@ export default function CadMap({
           <span>{is3D ? 'Chế độ 3D' : 'Chế độ 2D'}</span>
         </button>
       </div>
+
+      {/* ── Popover Định vị điểm theo tọa độ VN-2000 / WGS-84 ──────── */}
+      {showLocator && (
+        <div className="absolute top-14 right-14 z-20 w-[330px] p-3.5 rounded-lg bg-[#111D2E] border border-[#27384E] shadow-2xl space-y-3 text-[#E8EEF6] select-none">
+          <div className="flex items-center justify-between border-b border-[#27384E] pb-2">
+            <span className="text-[12.5px] font-bold uppercase tracking-wide text-[#22B7C9]">
+              Định Vị Điểm Theo Tọa Độ
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowLocator(false)}
+              className="text-[12px] text-[#8FA3BA] hover:text-[#E8EEF6] cursor-pointer"
+            >
+              Đóng
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-1 p-0.5 rounded bg-[#0B1220] border border-[#27384E] text-[11.5px]">
+            <button
+              type="button"
+              onClick={() => setLocatorSystem('VN2000')}
+              className={`py-1 px-2 rounded font-semibold cursor-pointer ${
+                locatorSystem === 'VN2000'
+                  ? 'bg-[#17263C] text-[#39B58A]'
+                  : 'text-[#8FA3BA] hover:text-[#E8EEF6]'
+              }`}
+            >
+              Hệ VN-2000 (m)
+            </button>
+            <button
+              type="button"
+              onClick={() => setLocatorSystem('WGS84')}
+              className={`py-1 px-2 rounded font-semibold cursor-pointer ${
+                locatorSystem === 'WGS84'
+                  ? 'bg-[#17263C] text-[#22B7C9]'
+                  : 'text-[#8FA3BA] hover:text-[#E8EEF6]'
+              }`}
+            >
+              Hệ WGS-84 (°)
+            </button>
+          </div>
+
+          {locatorSystem === 'VN2000' ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11.5px] text-[#A9B9CE] mb-1">
+                    X Bắc (Northing - m)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={locatorXNorth}
+                    onChange={(e) => setLocatorXNorth(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded bg-[#0B1220] border border-[#27384E] text-[12.5px] font-mono text-[#E8EEF6]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11.5px] text-[#A9B9CE] mb-1">
+                    Y Đông (Easting - m)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={locatorYEast}
+                    onChange={(e) => setLocatorYEast(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded bg-[#0B1220] border border-[#27384E] text-[12.5px] font-mono text-[#E8EEF6]"
+                  />
+                </div>
+              </div>
+              <div className="text-[11px] text-[#8FA3BA] font-mono">
+                {crsConfig?.crsConfigured !== false && crsConfig?.centralMeridian
+                  ? `Áp dụng VN-2000: L₀=${crsConfig.centralMeridian}°, k₀=${crsConfig.scaleFactor}`
+                  : '⚠️ Chưa cấu hình hệ quy chiếu VN-2000'}
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11.5px] text-[#A9B9CE] mb-1">
+                  Longitude (Kinh độ °)
+                </label>
+                <input
+                  type="number"
+                  step="0.00001"
+                  value={locatorLon}
+                  onChange={(e) => setLocatorLon(e.target.value)}
+                  className="w-full px-2.5 py-1.5 rounded bg-[#0B1220] border border-[#27384E] text-[12.5px] font-mono text-[#E8EEF6]"
+                />
+              </div>
+              <div>
+                <label className="block text-[11.5px] text-[#A9B9CE] mb-1">
+                  Latitude (Vĩ độ °)
+                </label>
+                <input
+                  type="number"
+                  step="0.00001"
+                  value={locatorLat}
+                  onChange={(e) => setLocatorLat(e.target.value)}
+                  className="w-full px-2.5 py-1.5 rounded bg-[#0B1220] border border-[#27384E] text-[12.5px] font-mono text-[#E8EEF6]"
+                />
+              </div>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handleLocateCoordinate}
+            className="w-full py-2 px-3 rounded bg-[#F06421] hover:bg-[#FF7635] text-white font-bold text-[12.5px] cursor-pointer"
+          >
+            Bay Tới &amp; Hiển Thị Tọa Độ
+          </button>
+        </div>
+      )}
+
+      {/* ── Live Inspected Point Dual-CRS Telemetry Card (Bottom-Left above Scale) ── */}
+      {lastInspectedPoint && (
+        <div className="absolute bottom-10 left-3 z-10 max-w-[380px] p-3 rounded-lg bg-[#111D2E]/95 border border-[#27384E] shadow-xl text-[12px] text-[#E8EEF6] select-text">
+          <div className="flex items-center justify-between gap-3 border-b border-[#27384E] pb-1.5 mb-1.5">
+            <span className="font-bold text-[#22B7C9] truncate">
+              {lastInspectedPoint.label}
+            </span>
+            <button
+              type="button"
+              onClick={() => setLastInspectedPoint(null)}
+              className="text-[11px] text-[#8FA3BA] hover:text-[#E8EEF6] cursor-pointer"
+            >
+              Ẩn
+            </button>
+          </div>
+          {(coordDisplayMode === 'DUAL' || coordDisplayMode === 'WGS84') && (
+            <div className="font-mono text-[11.5px] text-[#C0CEDF]">
+              <span className="text-[#8FA3BA]">WGS-84:</span> Lon{' '}
+              <strong className="text-[#38BDF8]">
+                {lastInspectedPoint.lon.toFixed(8)}°
+              </strong>{' '}
+              | Lat{' '}
+              <strong className="text-[#38BDF8]">
+                {lastInspectedPoint.lat.toFixed(8)}°
+              </strong>
+            </div>
+          )}
+          {(coordDisplayMode === 'DUAL' || coordDisplayMode === 'VN2000') && (
+            <div className="font-mono text-[11.5px] mt-1">
+              {lastInspectedPoint.vn2000 ? (
+                <>
+                  <span className="text-[#8FA3BA]">
+                    VN-2000 (L₀={lastInspectedPoint.vn2000.centralMeridian}°, Múi{' '}
+                    {lastInspectedPoint.vn2000.zoneType}):
+                  </span>{' '}
+                  X Bắc{' '}
+                  <strong className="text-[#F59E0B]">
+                    {lastInspectedPoint.vn2000.xNorth.toLocaleString('en-US', {
+                      minimumFractionDigits: 3,
+                      maximumFractionDigits: 3,
+                    })}
+                    m
+                  </strong>{' '}
+                  | Y Đông{' '}
+                  <strong className="text-[#39B58A]">
+                    {lastInspectedPoint.vn2000.yEast.toLocaleString('en-US', {
+                      minimumFractionDigits: 3,
+                      maximumFractionDigits: 3,
+                    })}
+                    m
+                  </strong>
+                </>
+              ) : (
+                <span className="text-[#F59E0B]">
+                  ⚠️ Chưa cấu hình CRS VN-2000 — Chưa thể quy đổi sang VN-2000
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Hint when no data loaded yet ─────────────────────────── */}
       {!cleanGeoJson && (
