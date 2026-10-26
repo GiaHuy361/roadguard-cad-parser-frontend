@@ -21,6 +21,11 @@ import {
   ChevronDown,
 } from 'lucide-react'
 
+import {
+  enrichGeoJsonWithEngineeringFeatures,
+  normalizeRoadParams,
+} from '../utils/roadEngineeringBuilder'
+
 /* Custom Tooltip for Cross-Section Crown */
 function CustomCrossSectionTooltip({ active, payload }) {
   if (active && payload && payload.length) {
@@ -57,15 +62,17 @@ function CustomCrossSectionTooltip({ active, payload }) {
 }
 
 export default function CrossSectionProfile({ geoJsonData, roadParams }) {
-  // Extract all station points from geoJsonData
+  const normalizedParams = useMemo(() => normalizeRoadParams(roadParams), [roadParams])
+
+  // Extract all station points from Single Source of Truth enriched GeoJSON
   const stations = useMemo(() => {
     if (!geoJsonData?.features) return []
-    const features = geoJsonData.features
+    const { enrichedGeoJson } = enrichGeoJsonWithEngineeringFeatures(geoJsonData, normalizedParams)
+    const features = enrichedGeoJson?.features || geoJsonData.features
 
-    let st = features.filter((f) => f.properties?.layerType === 'StationPoint')
-    if (st.length === 0) {
-      st = features.filter((f) => f.geometry?.type === 'Point')
-    }
+    const st = features.filter(
+      (f) => f.properties?.layerType === 'StationPoint' || f.properties?.type === 'StationMilestone'
+    )
 
     if (st.length > 0) {
       return st.map((f, idx) => {
@@ -77,15 +84,18 @@ export default function CrossSectionProfile({ geoJsonData, roadParams }) {
             ? Number(f.properties.elevation)
             : f.properties?.z != null
             ? Number(f.properties.z)
-            : 10.0 + idx * 0.15 // Realistic default elevation if 2D
+            : 10.0 + idx * 0.15 // Default reference elevation when CAD input is 2D
 
         const distance =
           f.properties?.distance != null
             ? Number(f.properties.distance)
-            : idx * Number(roadParams?.segmentLength || 100)
+            : f.properties?.distMeters != null
+            ? Number(f.properties.distMeters)
+            : idx * normalizedParams.segmentLength
 
         const name =
           f.properties?.stationName ||
+          f.properties?.chainage ||
           f.properties?.name ||
           `Km0+${String(Math.round(distance)).padStart(3, '0')}`
 
@@ -100,35 +110,15 @@ export default function CrossSectionProfile({ geoJsonData, roadParams }) {
       })
     }
 
-    // Fallback: If line features exist, sample 5 points
-    const line = features.find((f) => f.geometry?.type === 'LineString')
-    if (line?.geometry?.coordinates?.length) {
-      const coords = line.geometry.coordinates
-      const step = Math.max(1, Math.floor(coords.length / 6))
-      const pts = []
-      for (let i = 0; i < coords.length; i += step) {
-        const c = coords[i]
-        pts.push({
-          id: pts.length,
-          name: `Km0+${String(pts.length * 100).padStart(3, '0')}`,
-          distance: pts.length * 100,
-          elevation: c[2] != null ? Number(c[2]) : 12.5 + pts.length * 0.2,
-          lng: c[0],
-          lat: c[1],
-        })
-      }
-      return pts
-    }
-
     return []
-  }, [geoJsonData, roadParams])
+  }, [geoJsonData, normalizedParams])
 
   const [selectedStationIndex, setSelectedStationIndex] = useState(0)
 
   const activeStation = stations[selectedStationIndex] || stations[0] || null
 
   // Engineering calculations based on road width & standard 2% cross-slope (TCVN)
-  const roadWidth = Number(roadParams?.roadWidth) || 3.5
+  const roadWidth = normalizedParams.roadWidth
   const halfWidth = roadWidth / 2
   const shoulderWidth = 0.75
   const crossSlope = 0.02 // 2.0%

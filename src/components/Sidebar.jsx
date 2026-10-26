@@ -8,22 +8,15 @@ import {
   CheckCircle2, Sparkles, Download,
   Eye, EyeOff, Ruler, FlipHorizontal2, Route,
   BarChart3, ChevronLeft, Settings2,
-  CheckSquare, Square, Search, Target, Navigation
+  CheckSquare, Square, Search, Target, Navigation, AlertTriangle
 } from 'lucide-react'
 import { downloadExcelReport } from '../utils/excelExporter'
-
-/* ─── Central Meridian Presets (VN-2000 3-Degree Zones) ───────── */
-const CM_PRESETS = [
-  { value: '105.75', label: 'TP.HCM / Long An / Tiền Giang (105°45\')' },
-  { value: '105.75', label: 'Bình Dương / Bình Phước (105°45\')' },
-  { value: '107.75', label: 'Đồng Nai / Bà Rịa - Vũng Tàu (107°45\')' },
-  { value: '105.50', label: 'Tây Ninh (105°30\')' },
-  { value: '105.00', label: 'Cần Thơ / Hậu Giang (105°00\')' },
-  { value: '106.00', label: 'Bến Tre (106°00\')' },
-  { value: '107.75', label: 'Đà Nẵng / Quảng Nam (107°45\')' },
-  { value: '105.00', label: 'Hà Nội / Hải Phòng (105°00\')' },
-  { value: '105.00', label: 'Múi 6° Toàn quốc (105°00\')' },
-]
+import {
+  VN2000_REFERENCE_PRESETS,
+  convertRoadResponseToGeoJson,
+  enrichGeoJsonWithEngineeringFeatures,
+  normalizeRoadParams,
+} from '../utils/roadEngineeringBuilder'
 
 export default function Sidebar({
   onDataLoaded,
@@ -67,6 +60,7 @@ export default function Sidebar({
   const [activeCenterlineLayer, setActiveCenterlineLayer] = useState(null)
   const [coordsOpen, setCoordsOpen] = useState(false)
   const [coordsText, setCoordsText] = useState('')
+  const [axisAmbiguityAlert, setAxisAmbiguityAlert] = useState(null)
   const fileInputRef = useRef(null)
 
   useEffect(() => {
@@ -76,9 +70,24 @@ export default function Sidebar({
   }, [cadFile, file])
 
   const segmentLength = roadParams?.segmentLength ?? '100'
-  const roadWidth     = roadParams?.roadWidth ?? '3.5'
+  const roadWidth     = roadParams?.roadWidth ?? '7.0'
   const slabLength    = roadParams?.slabLength ?? '4.0'
+  const laneCount     = roadParams?.laneCount ?? '2'
+
+  // VN-2000 Geodetic CRS state (supports reference presets + custom CM + 3°/6° zone + explicit axis order)
+  const [selectedPresetId, setSelectedPresetId] = useState('hcm-3deg')
   const [selectedCm, setSelectedCm] = useState('105.75')
+  const [scaleFactor, setScaleFactor] = useState('0.9999')
+  const [axisOrder, setAxisOrder] = useState('AUTO')
+
+  const handlePresetChange = (presetId) => {
+    setSelectedPresetId(presetId)
+    const found = VN2000_REFERENCE_PRESETS.find((p) => p.id === presetId)
+    if (found) {
+      setSelectedCm(found.cm.toFixed(2))
+      setScaleFactor(found.scaleFactor.toFixed(4))
+    }
+  }
 
   const updateParam = (key, val) => {
     if (setRoadParams) {
@@ -119,209 +128,25 @@ export default function Sidebar({
     }
   }
 
-  function convertRoadResponseToGeoJson(data) {
-    if (!data) return null
-    const toLngLat = (p) => {
-      if (!Array.isArray(p) || p.length < 2) return p
-      const [a, b] = p
-      if (Math.abs(a) < Math.abs(b)) {
-        return [Number(b), Number(a)]
-      }
-      return [Number(a), Number(b)]
-    }
-
-    const features = []
-
-    // 1. Dải Mặt Đường Bê Tông 2D (Single Polygon hoặc Multi Polygon)
-    let hasMainSurface = false
-    if (data.roadSurfacePolygon && data.roadSurfacePolygon.length >= 3) {
-      const isNested = Array.isArray(data.roadSurfacePolygon[0]) && Array.isArray(data.roadSurfacePolygon[0][0])
-      const rawRing = isNested ? data.roadSurfacePolygon[0] : data.roadSurfacePolygon
-      const ring = rawRing.map(toLngLat)
-      if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
-        ring.push(ring[0])
-      }
-      features.push({
-        type: 'Feature',
-        id: 'road-surface-corridor',
-        properties: {
-          type: 'RoadSurface',
-          layer: 'MAT_DUONG_BETONG',
-          name: `Dải Mặt Đường Bê Tông (${data.roadWidth || 7.0}m)`,
-          roadWidth: data.roadWidth || 7.0,
-        },
-        geometry: {
-          type: 'Polygon',
-          coordinates: [ring],
-        },
-      })
-      hasMainSurface = true
-    }
-
-    // 1.2 Đảo giao thông (Traffic Islands từ Backend)
-    const islandFeatures = []
-    if (Array.isArray(data.trafficIslands) && data.trafficIslands.length > 0) {
-      data.trafficIslands.forEach((island, iIdx) => {
-        if (Array.isArray(island) && island.length >= 3) {
-          const ring = island.map(toLngLat)
-          if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
-            ring.push(ring[0])
-          }
-          islandFeatures.push({
-            type: 'Feature',
-            id: `traffic-island-${iIdx}`,
-            properties: {
-              type: 'TrafficIsland',
-              layer: 'DAO_GIAO_THONG',
-              name: `Đảo Giao Thông ${iIdx + 1}`,
-              isIsland: true,
-            },
-            geometry: {
-              type: 'Polygon',
-              coordinates: [ring],
-            },
-          })
-        }
-      })
-    }
-
-    // 1.3 Hỗ trợ thêm nếu backend trả về danh sách nhiều polygon (roadSurfacePolygons)
-    if (Array.isArray(data.roadSurfacePolygons) && data.roadSurfacePolygons.length > 0) {
-      data.roadSurfacePolygons.forEach((poly, pIdx) => {
-        if (pIdx === 0 && hasMainSurface) return
-        if (pIdx > 0 && islandFeatures.length > 0) return
-
-        if (Array.isArray(poly) && poly.length >= 3) {
-          const ring = poly.map(toLngLat)
-          if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
-            ring.push(ring[0])
-          }
-          const isIsland = pIdx > 0 || hasMainSurface
-          const feat = {
-            type: 'Feature',
-            id: isIsland ? `traffic-island-p-${pIdx}` : `road-surface-polygon-${pIdx}`,
-            properties: {
-              type: isIsland ? 'TrafficIsland' : 'RoadSurface',
-              layer: isIsland ? 'DAO_GIAO_THONG' : 'MAT_DUONG_BETONG',
-              name: isIsland ? `Đảo Giao Thông Phân Đoạn ${pIdx}` : `Mặt Đường Phân Đoạn ${pIdx + 1}`,
-              roadWidth: data.roadWidth || 7.0,
-              isIsland,
-            },
-            geometry: {
-              type: 'Polygon',
-              coordinates: [ring],
-            },
-          }
-          if (isIsland) {
-            islandFeatures.push(feat)
-          } else {
-            features.push(feat)
-            hasMainSurface = true
-          }
-        }
-      })
-    }
-
-    // Đẩy tất cả đảo giao thông vào features
-    features.push(...islandFeatures)
-
-    // 2. Trục Tim Tuyến Đường Chính
-    if (data.centerline && data.centerline.length >= 2) {
-      features.push({
-        type: 'Feature',
-        id: 'road-centerline-main',
-        properties: {
-          type: 'Centerline',
-          layer: 'TIM_TUYEN_CHINH',
-          name: data.roadName || 'Tim Tuyến Chính',
-          totalLength: data.totalLengthMeters,
-        },
-        geometry: {
-          type: 'LineString',
-          coordinates: data.centerline.map(toLngLat),
-        },
-      })
-    }
-
-    // 2.2 Các Nhánh Tim Tuyến Phụ & Ngã 3 Tam Giác (Centerline Branches)
-    if (Array.isArray(data.centerlineBranches) && data.centerlineBranches.length > 0) {
-      data.centerlineBranches.forEach((branch, bIdx) => {
-        if (Array.isArray(branch) && branch.length >= 2) {
-          features.push({
-            type: 'Feature',
-            id: `road-centerline-branch-${bIdx}`,
-            properties: {
-              type: 'Centerline',
-              layer: 'TIM_TUYEN_NHANH',
-              name: `Nhánh Tim Nút Giao ${bIdx + 1}`,
-              isBranch: true,
-            },
-            geometry: {
-              type: 'LineString',
-              coordinates: branch.map(toLngLat),
-            },
-          })
-        }
-      })
-    }
-
-    if (data.leftEdge && data.leftEdge.length >= 2) {
-      features.push({
-        type: 'Feature',
-        id: 'road-edge-left',
-        properties: {
-          type: 'RoadEdge',
-          layer: 'MEP_TRAI',
-          name: 'Mép Đường Trái',
-        },
-        geometry: {
-          type: 'LineString',
-          coordinates: data.leftEdge.map(toLngLat),
-        },
-      })
-    }
-
-    if (data.rightEdge && data.rightEdge.length >= 2) {
-      features.push({
-        type: 'Feature',
-        id: 'road-edge-right',
-        properties: {
-          type: 'RoadEdge',
-          layer: 'MEP_PHAI',
-          name: 'Mép Đường Phải',
-        },
-        geometry: {
-          type: 'LineString',
-          coordinates: data.rightEdge.map(toLngLat),
-        },
-      })
-    }
-
-    return {
-      type: 'FeatureCollection',
-      bounds: data.bounds,
-      totalLengthMeters: data.totalLengthMeters,
-      layerStats: data.layerStats,
-      features,
-    }
-  }
-
   const handleSubmit = async (overrideLayerName = null) => {
     if (!file) {
       toast.error('Vui lòng chọn file CAD (.dxf/.dwg) trước.')
       return
     }
     const targetLayer = typeof overrideLayerName === 'string' ? overrideLayerName : activeCenterlineLayer
+    const normParams = normalizeRoadParams({ segmentLength, roadWidth, slabLength, laneCount })
+    const exactRoadWidth = normParams.roadWidth
+    const cmVal = parseFloat(selectedCm) || 105.75
+    const k0Val = parseFloat(scaleFactor) || 0.9999
+
     setLoading(true)
     const tid = toast.loading(targetLayer ? `Đang dựng lại tuyến theo layer tim [${targetLayer}]…` : 'Đang bóc tách tim tuyến chính & chuyển đổi tọa độ VN-2000…')
     try {
       const roadFd = new FormData()
       roadFd.append('File', file)
-      const calculatedRoadWidth = (parseFloat(roadWidth) >= 5.0 ? parseFloat(roadWidth) : (parseFloat(roadWidth) * 2.0)) || 7.0
-      roadFd.append('RoadWidth', calculatedRoadWidth.toString())
-      if (selectedCm) {
-        roadFd.append('CentralMeridian', selectedCm.toString())
-      }
+      roadFd.append('RoadWidth', exactRoadWidth.toString())
+      roadFd.append('CentralMeridian', cmVal.toString())
+      roadFd.append('ScaleFactor', k0Val.toString())
       if (targetLayer) {
         roadFd.append('CenterlineLayerName', targetLayer)
       }
@@ -330,12 +155,11 @@ export default function Sidebar({
       parseFd.append('file', file)
       parseFd.append('targetSrid', '4326')
       parseFd.append('tessellationSegments', '72')
-      if (selectedCm) {
-        parseFd.append('centralMeridian', selectedCm.toString())
-      }
-      parseFd.append('SegmentLength', (parseFloat(segmentLength) || 100).toString())
-      parseFd.append('RoadWidth', (parseFloat(roadWidth) || 3.5).toString())
-      parseFd.append('SlabLength', (parseFloat(slabLength) || 4.0).toString())
+      parseFd.append('centralMeridian', cmVal.toString())
+      parseFd.append('scaleFactor', k0Val.toString())
+      parseFd.append('SegmentLength', normParams.segmentLength.toString())
+      parseFd.append('RoadWidth', exactRoadWidth.toString())
+      parseFd.append('SlabLength', normParams.slabLength.toString())
       if (targetLayer) {
         parseFd.append('centerlineLayerName', targetLayer)
       }
@@ -356,7 +180,7 @@ export default function Sidebar({
         if (Array.isArray(roadData.layerStats)) {
           setCadLayerStats(roadData.layerStats)
         }
-        const geojson = convertRoadResponseToGeoJson(roadData)
+        const geojson = convertRoadResponseToGeoJson(roadData, normParams)
         if (geojson && onDataLoaded) {
           onDataLoaded(geojson)
           loadedSomething = true
@@ -370,12 +194,14 @@ export default function Sidebar({
 
         if (analytics && onAnalyticsLoaded) {
           if (roadResult.status === 'fulfilled' && roadResult.value?.data?.totalLengthMeters) {
-            analytics.totalLengthMeters = roadResult.value.data.totalLengthMeters
-            const rawW = parseFloat(roadWidth) || 3.5
-            const w = rawW >= 5.0 ? rawW : rawW * 2.0
-            analytics.totalAreaSqm = Number((analytics.totalLengthMeters * w).toFixed(1))
-            analytics.roadSegments = Math.ceil(analytics.totalLengthMeters / (parseFloat(segmentLength) || 100))
-            analytics.estimatedConcreteSlabs = Math.floor(analytics.totalLengthMeters / (parseFloat(slabLength) || 4.0))
+            const rData = roadResult.value.data
+            analytics.totalLengthMeters = rData.totalLengthMeters
+            analytics.nominalAreaSqm = Number((rData.totalLengthMeters * exactRoadWidth).toFixed(2))
+            analytics.surfaceAreaSqm = rData.surfaceAreaSqm ?? analytics.nominalAreaSqm
+            analytics.totalAreaSqm = analytics.nominalAreaSqm
+            analytics.roadSegments = Math.ceil(rData.totalLengthMeters / normParams.segmentLength)
+            analytics.longitudinalSlabs = Math.floor(rData.totalLengthMeters / normParams.slabLength)
+            analytics.estimatedConcreteSlabs = analytics.longitudinalSlabs * normParams.laneCount
           }
           onAnalyticsLoaded(analytics)
         }
@@ -401,46 +227,66 @@ export default function Sidebar({
     }
   }
 
-  const handleSubmitCoords = async () => {
+  const handleSubmitCoords = async (overrideAxisOrder = null) => {
     if (!coordsText.trim()) {
       toast.error('Vui lòng nhập danh sách tọa độ VN-2000.')
       return
     }
+    const effectiveAxisOrder = typeof overrideAxisOrder === 'string' ? overrideAxisOrder : axisOrder
+    if (typeof overrideAxisOrder === 'string') {
+      setAxisOrder(overrideAxisOrder)
+    }
+    setAxisAmbiguityAlert(null)
+
+    const normParams = normalizeRoadParams({ segmentLength, roadWidth, slabLength, laneCount })
+    const exactRoadWidth = normParams.roadWidth
+    const cmVal = parseFloat(selectedCm) || 105.75
+    const k0Val = parseFloat(scaleFactor) || 0.9999
+
     setLoading(true)
     const tid = toast.loading('Đang dựng tuyến từ tọa độ VN-2000…')
     try {
-      const rawW = parseFloat(roadWidth) || 3.5
-      const calculatedRoadWidth = rawW >= 5.0 ? rawW : rawW * 2.0
       const res = await axios.post(`${API_BASE}/api/cad/parse-coords`, {
         coordinates: coordsText,
-        roadWidth: calculatedRoadWidth,
-        centralMeridian: selectedCm ? parseFloat(selectedCm) : null,
+        roadWidth: exactRoadWidth,
+        centralMeridian: cmVal,
+        scaleFactor: k0Val,
+        axisOrder: effectiveAxisOrder,
       })
       const roadData = res.data
       if (!roadData?.success) {
         throw new Error(roadData?.detail || 'Không thể dựng tuyến từ tọa độ')
       }
 
-      // Tọa độ nhập tay thay thế bản vẽ hiện tại: dọn trạng thái cũ trước khi nạp tuyến mới
       if (file) handleRemoveFile()
       setCadLayerStats([])
 
-      const geojson = convertRoadResponseToGeoJson(roadData)
+      const geojson = convertRoadResponseToGeoJson(roadData, normParams)
       if (geojson && onDataLoaded) onDataLoaded(geojson)
 
       if (onAnalyticsLoaded) {
         const len = roadData.totalLengthMeters || 0
+        const nominalArea = Number((len * exactRoadWidth).toFixed(2))
         onAnalyticsLoaded({
           totalLengthMeters: len,
-          totalAreaSqm: Number((len * calculatedRoadWidth).toFixed(1)),
-          roadSegments: Math.ceil(len / (parseFloat(segmentLength) || 100)),
-          estimatedConcreteSlabs: Math.floor(len / (parseFloat(slabLength) || 4.0)),
+          nominalAreaSqm: nominalArea,
+          surfaceAreaSqm: roadData.surfaceAreaSqm ?? nominalArea,
+          totalAreaSqm: nominalArea,
+          roadSegments: Math.ceil(len / normParams.segmentLength),
+          longitudinalSlabs: Math.floor(len / normParams.slabLength),
+          estimatedConcreteSlabs: Math.floor(len / normParams.slabLength) * normParams.laneCount,
         })
       }
       toast.success(`Đã dựng tuyến ${roadData.totalLengthMeters} m từ ${roadData.centerline?.length ?? 0} điểm tọa độ`, { id: tid })
     } catch (err) {
-      const msg = err?.response?.data?.detail || err?.message || 'Lỗi kết nối máy chủ'
-      toast.error(`Lỗi: ${msg}`, { id: tid })
+      const errData = err?.response?.data
+      if (errData?.error === 'AmbiguousAxisOrder' || errData?.requiresAxisConfirmation) {
+        setAxisAmbiguityAlert(errData.detail || 'Tọa độ nằm trong vùng giao thoa X/Y. Vui lòng chọn rõ thứ tự trục.')
+        toast.error('Cần xác nhận quy ước trục tọa độ X/Y!', { id: tid })
+      } else {
+        const msg = errData?.detail || err?.message || 'Lỗi kết nối máy chủ'
+        toast.error(`Lỗi: ${msg}`, { id: tid })
+      }
     } finally {
       setLoading(false)
     }
@@ -467,6 +313,9 @@ export default function Sidebar({
         fd.append('tessellationSegments', '72')
         if (selectedCm) {
           fd.append('centralMeridian', selectedCm.toString())
+        }
+        if (scaleFactor) {
+          fd.append('scaleFactor', scaleFactor.toString())
         }
         const res = await axios.post(`${API_BASE}/api/cad/parse-dxf`, fd)
         const raw = res.data?.featureCollection?.features || []
@@ -517,129 +366,73 @@ export default function Sidebar({
     handleSubmit(layerName)
   }
 
+  // ── Single Source of Truth Engineering Computation ──
+  const { enrichedGeoJson, droneSegments: ssotDroneSegments, metrics: ssotMetrics } = useMemo(() => {
+    if (!geoJsonData) {
+      return { enrichedGeoJson: null, droneSegments: [], metrics: null }
+    }
+    return enrichGeoJsonWithEngineeringFeatures(geoJsonData, roadParams, [], completedSegments)
+  }, [geoJsonData, roadParams, completedSegments])
+
   const handleDownloadExcel = async () => {
     if (!geoJsonData && !analyticsData) {
       toast.error('Chưa có dữ liệu CAD để xuất báo cáo.')
       return
     }
+    const normParams = normalizeRoadParams(roadParams)
     await downloadExcelReport({
-      geoJsonData,
+      geoJsonData: enrichedGeoJson || geoJsonData,
       analyticsData,
-      roadParams: {
-        segmentLength: parseFloat(segmentLength) || 100,
-        roadWidth: parseFloat(roadWidth) || 3.5,
-        slabLength: parseFloat(slabLength) || 4.0,
-      },
+      roadParams: normParams,
     })
   }
 
   const handleDownloadGeoJSON = () => {
-    if (!geoJsonData) {
+    const targetGeoJson = enrichedGeoJson || geoJsonData
+    if (!targetGeoJson) {
       toast.error('Chưa có dữ liệu GeoJSON.')
       return
     }
-    const blob = new Blob([JSON.stringify(geoJsonData, null, 2)], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify(targetGeoJson, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
     a.download = 'roadguard-export.geojson'
     a.click()
     URL.revokeObjectURL(url)
-    toast.success('Đã tải tệp GeoJSON!')
+    toast.success('Đã tải tệp GeoJSON chuẩn RFC 7946!')
   }
 
-  // ── Drone Segments Calculation ──
-  const droneSegments = useMemo(() => {
-    let totLen = 0
-    if (geoJsonData?.totalLengthMeters && Number(geoJsonData.totalLengthMeters) > 0) {
-      totLen = Number(geoJsonData.totalLengthMeters)
-    } else if (geoJsonData?.features) {
-      const cl = geoJsonData.features.find(f => f.id === 'road-centerline-main' || f.properties?.type === 'Centerline')
-      if (cl?.properties?.totalLength) {
-        totLen = Number(cl.properties.totalLength)
-      }
-    } else if (analyticsData?.totalLengthMeters && Number(analyticsData.totalLengthMeters) > 0) {
-      totLen = Number(analyticsData.totalLengthMeters)
-    }
-
-    if (totLen <= 0) return []
-
-    const segL = parseFloat(segmentLength) || 100
-    const count = Math.ceil(totLen / segL)
-    const list = []
-    for (let i = 1; i <= count; i++) {
-      const segId = `SEG-${String(i).padStart(2, '0')}`
-      const startM = Math.round((i - 1) * segL)
-      const endM = Math.round(Math.min(i * segL, totLen))
-      const startKm = `Km0+${String(startM).padStart(3, '0')}`
-      const endKm = `Km0+${String(endM).padStart(3, '0')}`
-      list.push({
-        id: segId,
-        index: i,
-        name: `Phân đoạn ${i}`,
-        range: `${startKm} - ${endKm}`,
-        startM,
-        endM,
-        startDist: startM,
-        endDist: endM,
-        length: Math.round(endM - startM),
-      })
-    }
-
-    // Kiểm tra và bổ sung phân đoạn cho các nhánh nút giao / giao lộ phụ
-    const branchFeatures = geoJsonData?.features?.filter(
-      f => f.id?.startsWith('road-centerline-branch') || f.properties?.isBranch
-    )
-    if (branchFeatures && branchFeatures.length > 0) {
-      let bLen = 0
-      branchFeatures.forEach(bf => {
-        const coords = bf.geometry?.coordinates
-        if (coords && coords.length >= 2) {
-          for (let k = 0; k < coords.length - 1; k++) {
-            const dx = (coords[k+1][0] - coords[k][0]) * 111320 * Math.cos(coords[k][1] * Math.PI / 180)
-            const dy = (coords[k+1][1] - coords[k][1]) * 111320
-            bLen += Math.hypot(dx, dy)
-          }
-        }
-      })
-      const finalBLen = Math.round(bLen) || 0
-      if (finalBLen >= 15) {
-        const segId = `SEG-${String(list.length + 1).padStart(2, '0')}`
-        list.push({
-          id: segId,
-          index: list.length + 1,
-          name: `Phân đoạn ${list.length + 1} (Nhánh giao lộ)`,
-          range: `Nhánh giao lộ (${finalBLen}m)`,
-          startM: Math.round(totLen),
-          endM: Math.round(totLen + finalBLen),
-          startDist: Math.round(totLen),
-          endDist: Math.round(totLen + finalBLen),
-          length: finalBLen,
-          isBranch: true,
-        })
-      }
-    }
-
-    return list
-  }, [geoJsonData, analyticsData, segmentLength])
+  const droneSegments = ssotDroneSegments
 
   const displayLength = useMemo(() => {
-    const len = Number(analyticsData?.totalLengthMeters || geoJsonData?.totalLengthMeters || 0)
+    const len = Number(ssotMetrics?.totalLengthMeters ?? analyticsData?.totalLengthMeters ?? geoJsonData?.totalLengthMeters ?? 0)
     return Number(len.toFixed(1))
-  }, [geoJsonData, analyticsData])
+  }, [ssotMetrics, geoJsonData, analyticsData])
 
   const displayWidth = useMemo(() => {
-    const rawW = parseFloat(roadWidth) || 3.5
-    return rawW >= 5.0 ? rawW : rawW * 2.0
-  }, [roadWidth])
+    return normalizeRoadParams(roadParams).roadWidth
+  }, [roadParams])
 
   const displayArea = useMemo(() => {
-    return Number((displayLength * displayWidth).toFixed(1))
-  }, [displayLength, displayWidth])
+    return Number((ssotMetrics?.nominalAreaSqm ?? displayLength * displayWidth).toFixed(1))
+  }, [ssotMetrics, displayLength, displayWidth])
+
+  const displaySurfaceArea = useMemo(() => {
+    return Number((ssotMetrics?.surfaceAreaSqm ?? displayArea).toFixed(1))
+  }, [ssotMetrics, displayArea])
 
   const displaySlabs = useMemo(() => {
-    return Math.floor(displayLength / (parseFloat(slabLength) || 4.0))
-  }, [displayLength, slabLength])
+    if (ssotMetrics?.totalSlabPieces != null) return ssotMetrics.totalSlabPieces
+    const norm = normalizeRoadParams(roadParams)
+    return Math.floor(displayLength / norm.slabLength) * norm.laneCount
+  }, [ssotMetrics, displayLength, roadParams])
+
+  const displayLongitudinalSlabs = useMemo(() => {
+    if (ssotMetrics?.longitudinalSlabs != null) return ssotMetrics.longitudinalSlabs
+    const norm = normalizeRoadParams(roadParams)
+    return Math.floor(displayLength / norm.slabLength)
+  }, [ssotMetrics, displayLength, roadParams])
 
   const displaySegments = useMemo(() => {
     return droneSegments.length
@@ -852,29 +645,68 @@ export default function Sidebar({
             )}
           </div>
 
-          {/* Central Meridian */}
-          <div className="pt-0.5">
-            <div className="flex items-center justify-between mb-1.5 text-[11px]">
-              <label htmlFor="cm-select" className="font-medium text-slate-300 flex items-center gap-1.5">
-                <Compass size={12} className="text-blue-400" />
-                Kinh tuyến trục (VN-2000)
-              </label>
-              <span className="font-mono text-[10px] font-bold text-blue-300 bg-blue-500/10 border border-blue-500/25 px-1.5 py-0.5 rounded">
-                {selectedCm}°
-              </span>
-            </div>
-            <select
-              id="cm-select"
-              value={selectedCm}
-              onChange={(e) => setSelectedCm(e.target.value)}
-              className="w-full bg-[#0e121f] border border-[#2a3654] rounded-lg px-3 py-2 text-xs font-medium text-slate-200 focus:outline-none focus:border-blue-500 transition-colors cursor-pointer"
-            >
-              {CM_PRESETS.map((item, idx) => (
-                <option key={idx} value={item.value} className="bg-[#161c2e] text-slate-200">
-                  {item.label}
+          {/* VN-2000 Geodetic CRS Configuration */}
+          <div className="pt-0.5 space-y-2.5">
+            <div>
+              <div className="flex items-center justify-between mb-1.5 text-[11px]">
+                <label htmlFor="cm-preset-select" className="font-medium text-slate-300 flex items-center gap-1.5">
+                  <Compass size={12} className="text-blue-400" />
+                  Kinh tuyến trục tham chiếu (VN-2000)
+                </label>
+                <span className="font-mono text-[10px] font-bold text-blue-300 bg-blue-500/10 border border-blue-500/25 px-1.5 py-0.5 rounded">
+                  {selectedCm}° (k₀={scaleFactor})
+                </span>
+              </div>
+              <select
+                id="cm-preset-select"
+                value={selectedPresetId}
+                onChange={(e) => handlePresetChange(e.target.value)}
+                className="w-full bg-[#0e121f] border border-[#2a3654] rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-200 focus:outline-none focus:border-blue-500 transition-colors cursor-pointer"
+              >
+                {VN2000_REFERENCE_PRESETS.map((item) => (
+                  <option key={item.id} value={item.id} className="bg-[#161c2e] text-slate-200">
+                    {item.label}
+                  </option>
+                ))}
+                <option value="custom" className="bg-[#161c2e] text-amber-300">
+                  Kinh tuyến trục tùy chỉnh (Custom L₀)
                 </option>
-              ))}
-            </select>
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[10px] text-slate-400 mb-1">
+                  Kinh tuyến trục L₀ (°)
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={selectedCm}
+                  onChange={(e) => {
+                    setSelectedCm(e.target.value)
+                    setSelectedPresetId('custom')
+                  }}
+                  className="w-full bg-[#0e121f] border border-[#2a3654] rounded-lg px-2.5 py-1.5 font-mono text-xs text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-400 mb-1">
+                  Múi chiếu (Scale k₀)
+                </label>
+                <select
+                  value={scaleFactor}
+                  onChange={(e) => {
+                    setScaleFactor(e.target.value)
+                    setSelectedPresetId('custom')
+                  }}
+                  className="w-full bg-[#0e121f] border border-[#2a3654] rounded-lg px-2 py-1.5 font-mono text-xs text-white focus:outline-none focus:border-blue-500 cursor-pointer"
+                >
+                  <option value="0.9999">Múi 3° (0.9999)</option>
+                  <option value="0.9996">Múi 6° (0.9996)</option>
+                </select>
+              </div>
+            </div>
           </div>
 
           {/* Manual VN-2000 coordinates */}
@@ -892,6 +724,49 @@ export default function Sidebar({
             </button>
             {coordsOpen && (
               <div className="space-y-2">
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1">
+                    Quy ước thứ tự trục tọa độ đầu vào
+                  </label>
+                  <select
+                    value={axisOrder}
+                    onChange={(e) => {
+                      setAxisOrder(e.target.value)
+                      setAxisAmbiguityAlert(null)
+                    }}
+                    className="w-full bg-[#0e121f] border border-[#2a3654] rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-slate-200 focus:outline-none focus:border-amber-500 cursor-pointer"
+                  >
+                    <option value="AUTO">Tự động nhận diện (Kiểm tra độ tin cậy)</option>
+                    <option value="VN2000_XY">Trắc địa VN-2000: (X = Bắc, Y = Đông)</option>
+                    <option value="CAD_EN">Bản vẽ CAD: (X = Đông, Y = Bắc)</option>
+                  </select>
+                </div>
+
+                {axisAmbiguityAlert && (
+                  <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/40 text-[11px] text-amber-200 space-y-2">
+                    <div className="flex items-start gap-1.5">
+                      <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+                      <span className="leading-snug">{axisAmbiguityAlert}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleSubmitCoords('VN2000_XY')}
+                        className="px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-[10px] font-bold text-amber-200 cursor-pointer"
+                      >
+                        Dùng (X=Bắc, Y=Đông)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSubmitCoords('CAD_EN')}
+                        className="px-2 py-1 rounded bg-blue-500/20 hover:bg-blue-500/30 border border-blue-400/40 text-[10px] font-bold text-blue-200 cursor-pointer"
+                      >
+                        Dùng (X=Đông, Y=Bắc)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <textarea
                   value={coordsText}
                   onChange={(e) => setCoordsText(e.target.value)}
@@ -901,11 +776,11 @@ export default function Sidebar({
                   className="w-full bg-[#0e121f] border border-[#2a3654] rounded-lg px-3 py-2 text-[11px] font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-amber-500 transition-colors resize-y"
                 />
                 <p className="text-[10px] text-slate-500 leading-snug">
-                  Tự nhận thứ tự trục (Bắc, Đông) hoặc (Đông, Bắc). Dùng kinh tuyến trục và bề rộng mặt đường đang chọn.
+                  Hỗ trợ toàn bộ dải tọa độ Việt Nam (bao gồm miền Nam Y &lt; 1.000.000m). Nếu tọa độ nằm trong dải giao thoa [800.000 - 950.000m], hệ thống sẽ yêu cầu xác nhận trục.
                 </p>
                 <button
                   type="button"
-                  onClick={handleSubmitCoords}
+                  onClick={() => handleSubmitCoords()}
                   disabled={loading || !coordsText.trim()}
                   className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all ${
                     loading || !coordsText.trim()
@@ -929,20 +804,39 @@ export default function Sidebar({
           </div>
 
           <div className="space-y-2.5">
-            <div>
-              <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400 mb-1">
-                <FlipHorizontal2 size={12} className="text-blue-400/80" />
-                Bề rộng mặt đường (B)
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={roadWidth}
-                  onChange={(e) => updateParam('roadWidth', e.target.value)}
-                  className="w-full bg-[#0e121f] border border-[#2a3654] rounded-lg px-3 py-1.5 font-mono text-xs text-white focus:outline-none focus:border-blue-500 pr-8"
-                />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono text-slate-400 font-bold">m</span>
+            <div className="grid grid-cols-2 gap-2.5">
+              <div>
+                <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400 mb-1">
+                  <FlipHorizontal2 size={12} className="text-blue-400/80" />
+                  Bề rộng mặt (B)
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={roadWidth}
+                    onChange={(e) => updateParam('roadWidth', e.target.value)}
+                    className="w-full bg-[#0e121f] border border-[#2a3654] rounded-lg px-2.5 py-1.5 font-mono text-xs text-white focus:outline-none focus:border-blue-500 pr-7"
+                  />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-mono text-slate-400 font-bold">m</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400 mb-1">
+                  <Layers size={12} className="text-blue-400/80" />
+                  Số dải tấm ngang
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={laneCount}
+                    onChange={(e) => updateParam('laneCount', e.target.value)}
+                    className="w-full bg-[#0e121f] border border-[#2a3654] rounded-lg px-2.5 py-1.5 font-mono text-xs text-white focus:outline-none focus:border-blue-500 pr-9"
+                  />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-mono text-slate-400 font-bold">làn</span>
+                </div>
               </div>
             </div>
 
@@ -967,7 +861,7 @@ export default function Sidebar({
               <div>
                 <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400 mb-1">
                   <Ruler size={12} className="text-blue-400/80" />
-                  Tấm BTXM
+                  Chiều dài tấm BTXM
                 </label>
                 <div className="relative">
                   <input
@@ -1360,7 +1254,7 @@ export default function Sidebar({
           </div>
         </div>
 
-        {/* ── Card 4: Engineering Analysis KPIs (When Ready) ── */}
+        {/* ── Card 6: Engineering Analysis KPIs (When Ready) ── */}
         {(analyticsData || geoJsonData) && (
           <div className="bg-[#161c2e] border border-emerald-500/25 rounded-xl p-3.5 space-y-2.5 shadow-sm">
             <div className="flex items-center justify-between text-[11px] font-semibold text-slate-300">
@@ -1377,12 +1271,18 @@ export default function Sidebar({
                 <p className="font-mono font-bold text-white text-sm mt-0.5">
                   {displayLength.toFixed(1)} m
                 </p>
+                <p className="text-[9px] text-slate-500 font-mono mt-0.5">
+                  B = {displayWidth.toFixed(1)} m
+                </p>
               </div>
 
               <div className="bg-[#0e121f] p-2.5 rounded-lg border border-[#232d47]">
-                <p className="text-[10px] text-slate-400 font-medium">Diện tích mặt</p>
+                <p className="text-[10px] text-slate-400 font-medium">Diện tích (L×B)</p>
                 <p className="font-mono font-bold text-emerald-400 text-sm mt-0.5">
                   {displayArea.toLocaleString(undefined, { maximumFractionDigits: 1 })} m²
+                </p>
+                <p className="text-[9px] text-slate-500 font-mono mt-0.5" title="Diện tích đa giác mặt phẳng thực tế">
+                  Đa giác: {displaySurfaceArea.toLocaleString(undefined, { maximumFractionDigits: 1 })} m²
                 </p>
               </div>
 
@@ -1391,12 +1291,18 @@ export default function Sidebar({
                 <p className="font-mono font-bold text-cyan-300 text-sm mt-0.5">
                   {displaySlabs} tấm
                 </p>
+                <p className="text-[9px] text-slate-500 font-mono mt-0.5">
+                  {displayLongitudinalSlabs} dải × {normalizeRoadParams(roadParams).laneCount} làn
+                </p>
               </div>
 
               <div className="bg-[#0e121f] p-2.5 rounded-lg border border-[#232d47]">
                 <p className="text-[10px] text-slate-400 font-medium">Phân đoạn</p>
                 <p className="font-mono font-bold text-amber-300 text-sm mt-0.5">
                   {displaySegments} đoạn
+                </p>
+                <p className="text-[9px] text-slate-500 font-mono mt-0.5">
+                  L = {normalizeRoadParams(roadParams).segmentLength} m/đoạn
                 </p>
               </div>
             </div>

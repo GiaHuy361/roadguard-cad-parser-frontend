@@ -1,10 +1,14 @@
 import { useState, useMemo } from 'react'
-import { Toaster } from 'react-hot-toast'
+import toast, { Toaster } from 'react-hot-toast'
 import Sidebar from './components/Sidebar'
 import CadMap from './components/CadMap'
 import CadViewer from './components/CadViewer'
 import CrossSectionProfile from './components/CrossSectionProfile'
 import { downloadExcelReport } from './utils/excelExporter'
+import {
+  enrichGeoJsonWithEngineeringFeatures,
+  normalizeRoadParams,
+} from './utils/roadEngineeringBuilder'
 import {
   Map, ScanLine, Database, Compass,
   Satellite, FileSpreadsheet, Route,
@@ -40,8 +44,9 @@ export default function App() {
   const [customCadFeatures, setCustomCadFeatures] = useState([])
   const [roadParams,      setRoadParams]      = useState({
     segmentLength: '100',
-    roadWidth: '3.5',
+    roadWidth: '7.0',
     slabLength: '4.0',
+    laneCount: '2',
   })
 
   const handleCadFileChange = (file) => {
@@ -61,12 +66,25 @@ export default function App() {
 
   const isLive = !!(geoJsonData || analyticsData)
 
+  // Single Source of Truth: synchronized GeoJSON and engineering metrics across Map, Profile, GeoJSON tab, and Excel
+  const { enrichedGeoJson, metrics: ssotMetrics } = useMemo(() => {
+    if (!geoJsonData) return { enrichedGeoJson: null, metrics: null }
+    return enrichGeoJsonWithEngineeringFeatures(
+      geoJsonData,
+      roadParams,
+      customCadFeatures,
+      completedSegments
+    )
+  }, [geoJsonData, roadParams, customCadFeatures, completedSegments])
+
+  const exportGeoJson = enrichedGeoJson || geoJsonData
+
   const handleCopyGeoJson = () => {
-    if (!geoJsonData) return
-    const text = JSON.stringify(geoJsonData, null, 2)
+    if (!exportGeoJson) return
+    const text = JSON.stringify(exportGeoJson, null, 2)
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true)
-      toast.success('Đã sao chép toàn bộ GeoJSON vào Clipboard!')
+      toast.success('Đã sao chép toàn bộ GeoJSON (RFC 7946) vào Clipboard!')
       setTimeout(() => setCopied(false), 2000)
     }).catch(() => {
       toast.error('Không thể sao chép tự động, vui lòng bôi đen và bấm Ctrl+C')
@@ -74,27 +92,24 @@ export default function App() {
   }
 
   const handleDownloadGeoJsonFile = () => {
-    if (!geoJsonData) return
-    const blob = new Blob([JSON.stringify(geoJsonData, null, 2)], { type: 'application/json' })
+    if (!exportGeoJson) return
+    const blob = new Blob([JSON.stringify(exportGeoJson, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
     a.download = 'roadguard-export.geojson'
     a.click()
     URL.revokeObjectURL(url)
-    toast.success('Đã tải tệp GeoJSON!')
+    toast.success('Đã tải tệp GeoJSON chuẩn RFC 7946!')
   }
 
   const handleQuickExcel = async () => {
-    if (!geoJsonData && !analyticsData) return
+    if (!exportGeoJson && !analyticsData) return
+    const normalized = normalizeRoadParams(roadParams)
     await downloadExcelReport({
-      geoJsonData,
+      geoJsonData: exportGeoJson,
       analyticsData,
-      roadParams: {
-        segmentLength: parseFloat(roadParams.segmentLength) || 100,
-        roadWidth: parseFloat(roadParams.roadWidth) || 3.5,
-        slabLength: parseFloat(roadParams.slabLength) || 4.0,
-      },
+      roadParams: normalized,
     })
   }
 
@@ -316,7 +331,7 @@ export default function App() {
             {activeTab === 'profile' && (
               <div className="w-full h-full">
                 <CrossSectionProfile
-                  geoJsonData={geoJsonData}
+                  geoJsonData={exportGeoJson}
                   roadParams={roadParams}
                 />
               </div>
@@ -330,16 +345,16 @@ export default function App() {
                   <div className="flex items-center gap-2.5">
                     <Database size={15} className="text-blue-400" />
                     <span className="text-xs font-bold text-white tracking-wide uppercase">
-                      Cấu Trúc GeoJSON (WGS84 / EPSG:4326)
+                      Cấu Trúc GeoJSON (RFC 7946 / WGS84 EPSG:4326)
                     </span>
-                    {geoJsonData && (
+                    {exportGeoJson && (
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                        {(JSON.stringify(geoJsonData).length / 1024).toFixed(1)} KB
+                        {(JSON.stringify(exportGeoJson).length / 1024).toFixed(1)} KB
                       </span>
                     )}
                   </div>
 
-                  {geoJsonData && (
+                  {exportGeoJson && (
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -366,9 +381,9 @@ export default function App() {
 
                 {/* GeoJSON Content Area (freely selectable and copyable) */}
                 <div className="flex-1 p-6 overflow-auto font-mono text-xs select-text">
-                  {geoJsonData ? (
+                  {exportGeoJson ? (
                     <pre className="max-w-5xl mx-auto p-5 rounded-xl bg-[#111625] border border-[#1e263d] shadow-2xl whitespace-pre-wrap break-words text-slate-300 select-text cursor-text leading-relaxed">
-                      {JSON.stringify(geoJsonData, null, 2)}
+                      {JSON.stringify(exportGeoJson, null, 2)}
                     </pre>
                   ) : (
                     <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-3 select-none">
@@ -390,7 +405,7 @@ export default function App() {
                 Hệ tọa độ: <strong className="text-slate-200">WGS84 / EPSG:4326</strong>
               </span>
               <span>
-                Quy chuẩn: <span className="text-slate-300">TCVN 4054:2005</span>
+                Quy chuẩn: <span className="text-slate-300">TCVN 4054:2005 &amp; 10380</span>
               </span>
               {vertexCount > 0 && (
                 <span>
@@ -400,23 +415,27 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-4">
-              {analyticsData && (
+              {(ssotMetrics || analyticsData) && (
                 <>
                   <span>
-                    Chiều dài: <strong className="text-slate-200">{Number(analyticsData.totalLengthMeters || 0).toFixed(1)}m</strong>
-                  </span>
-                  <span>
-                    Diện tích: <strong className="text-emerald-400">
-                      {Number(
-                        analyticsData.totalAreaSqm ||
-                        (Number(analyticsData.totalLengthMeters || 0) * (parseFloat(roadParams?.roadWidth) >= 5 ? parseFloat(roadParams?.roadWidth) : parseFloat(roadParams?.roadWidth || 3.5) * 2)) ||
-                        0
-                      ).toLocaleString(undefined, { maximumFractionDigits: 1 })}m²
+                    Chiều dài: <strong className="text-slate-200">
+                      {Number(ssotMetrics?.totalLengthMeters ?? analyticsData?.totalLengthMeters ?? 0).toFixed(1)}m
                     </strong>
                   </span>
                   <span>
-                    Xử lý: <span className="text-slate-300">{analyticsData.processingTimeMs || 3015}ms</span>
+                    Diện tích (L×B): <strong className="text-emerald-400">
+                      {Number(
+                        ssotMetrics?.nominalAreaSqm ??
+                        analyticsData?.totalAreaSqm ??
+                        (Number(analyticsData?.totalLengthMeters || 0) * normalizeRoadParams(roadParams).roadWidth)
+                      ).toLocaleString(undefined, { maximumFractionDigits: 1 })}m²
+                    </strong>
                   </span>
+                  {analyticsData?.processingTimeMs && (
+                    <span>
+                      Xử lý: <span className="text-slate-300">{analyticsData.processingTimeMs}ms</span>
+                    </span>
+                  )}
                 </>
               )}
               <span className="text-slate-500">RoadGuard Engine v2.4</span>
