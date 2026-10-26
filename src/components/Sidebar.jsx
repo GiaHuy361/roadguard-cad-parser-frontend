@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import axios from 'axios'
+import { API_BASE } from '../config'
 import toast from 'react-hot-toast'
 import {
   FileCode2, Sliders, Layers, Loader2, X,
@@ -64,6 +65,8 @@ export default function Sidebar({
   const [loadingLayers, setLoadingLayers] = useState({})
   const [selectedCategory, setSelectedCategory] = useState('ALL')
   const [activeCenterlineLayer, setActiveCenterlineLayer] = useState(null)
+  const [coordsOpen, setCoordsOpen] = useState(false)
+  const [coordsText, setCoordsText] = useState('')
   const fileInputRef = useRef(null)
 
   useEffect(() => {
@@ -338,10 +341,10 @@ export default function Sidebar({
       }
 
       const [roadResult, parseResult] = await Promise.allSettled([
-        axios.post('http://localhost:5198/api/cad/parse-road', roadFd, {
+        axios.post(`${API_BASE}/api/cad/parse-road`, roadFd, {
           headers: { 'Content-Type': 'multipart/form-data' },
         }),
-        axios.post('http://localhost:5198/api/cad/parse-dxf', parseFd, {
+        axios.post(`${API_BASE}/api/cad/parse-dxf`, parseFd, {
           headers: { 'Content-Type': 'multipart/form-data' },
         }),
       ])
@@ -398,6 +401,51 @@ export default function Sidebar({
     }
   }
 
+  const handleSubmitCoords = async () => {
+    if (!coordsText.trim()) {
+      toast.error('Vui lòng nhập danh sách tọa độ VN-2000.')
+      return
+    }
+    setLoading(true)
+    const tid = toast.loading('Đang dựng tuyến từ tọa độ VN-2000…')
+    try {
+      const rawW = parseFloat(roadWidth) || 3.5
+      const calculatedRoadWidth = rawW >= 5.0 ? rawW : rawW * 2.0
+      const res = await axios.post(`${API_BASE}/api/cad/parse-coords`, {
+        coordinates: coordsText,
+        roadWidth: calculatedRoadWidth,
+        centralMeridian: selectedCm ? parseFloat(selectedCm) : null,
+      })
+      const roadData = res.data
+      if (!roadData?.success) {
+        throw new Error(roadData?.detail || 'Không thể dựng tuyến từ tọa độ')
+      }
+
+      // Tọa độ nhập tay thay thế bản vẽ hiện tại: dọn trạng thái cũ trước khi nạp tuyến mới
+      if (file) handleRemoveFile()
+      setCadLayerStats([])
+
+      const geojson = convertRoadResponseToGeoJson(roadData)
+      if (geojson && onDataLoaded) onDataLoaded(geojson)
+
+      if (onAnalyticsLoaded) {
+        const len = roadData.totalLengthMeters || 0
+        onAnalyticsLoaded({
+          totalLengthMeters: len,
+          totalAreaSqm: Number((len * calculatedRoadWidth).toFixed(1)),
+          roadSegments: Math.ceil(len / (parseFloat(segmentLength) || 100)),
+          estimatedConcreteSlabs: Math.floor(len / (parseFloat(slabLength) || 4.0)),
+        })
+      }
+      toast.success(`Đã dựng tuyến ${roadData.totalLengthMeters} m từ ${roadData.centerline?.length ?? 0} điểm tọa độ`, { id: tid })
+    } catch (err) {
+      const msg = err?.response?.data?.detail || err?.message || 'Lỗi kết nối máy chủ'
+      toast.error(`Lỗi: ${msg}`, { id: tid })
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleToggleLayer = async (layerName, category) => {
     if (!file) {
       toast.error('Vui lòng chọn file CAD trước.')
@@ -420,7 +468,7 @@ export default function Sidebar({
         if (selectedCm) {
           fd.append('centralMeridian', selectedCm.toString())
         }
-        const res = await axios.post('http://localhost:5198/api/cad/parse-dxf', fd)
+        const res = await axios.post(`${API_BASE}/api/cad/parse-dxf`, fd)
         const raw = res.data?.featureCollection?.features || []
         const tagged = raw.map((f, fIdx) => ({
           ...f,
@@ -827,6 +875,49 @@ export default function Sidebar({
                 </option>
               ))}
             </select>
+          </div>
+
+          {/* Manual VN-2000 coordinates */}
+          <div className="pt-2 border-t border-[#232d47] space-y-2">
+            <button
+              type="button"
+              onClick={() => setCoordsOpen((v) => !v)}
+              className="w-full flex items-center justify-between text-[11px] font-medium text-slate-300 hover:text-white transition-colors"
+            >
+              <span className="flex items-center gap-1.5">
+                <Navigation size={12} className="text-amber-400" />
+                Nhập tọa độ VN-2000 (không cần file CAD)
+              </span>
+              <span className="text-[10px] text-slate-500">{coordsOpen ? 'Thu gọn' : 'Mở'}</span>
+            </button>
+            {coordsOpen && (
+              <div className="space-y-2">
+                <textarea
+                  value={coordsText}
+                  onChange={(e) => setCoordsText(e.target.value)}
+                  rows={6}
+                  spellCheck={false}
+                  placeholder={'Mỗi dòng 1 điểm (X/Bắc, Y/Đông):\n1199145.22, 614235.15\n1199195.22, 614321.75\n1199245.22, 614408.35'}
+                  className="w-full bg-[#0e121f] border border-[#2a3654] rounded-lg px-3 py-2 text-[11px] font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-amber-500 transition-colors resize-y"
+                />
+                <p className="text-[10px] text-slate-500 leading-snug">
+                  Tự nhận thứ tự trục (Bắc, Đông) hoặc (Đông, Bắc). Dùng kinh tuyến trục và bề rộng mặt đường đang chọn.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleSubmitCoords}
+                  disabled={loading || !coordsText.trim()}
+                  className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all ${
+                    loading || !coordsText.trim()
+                      ? 'bg-slate-800 text-slate-500 border border-slate-700/50 cursor-not-allowed'
+                      : 'bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 cursor-pointer'
+                  }`}
+                >
+                  {loading ? <Loader2 size={12} className="animate-spin" /> : <Route size={12} />}
+                  Dựng tuyến từ tọa độ
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

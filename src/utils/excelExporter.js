@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx'
 import axios from 'axios'
+import { API_BASE } from '../config'
 import toast from 'react-hot-toast'
 
 /**
@@ -12,7 +13,7 @@ export async function downloadExcelReport({ geoJsonData, analyticsData, roadPara
 
   // 1. First attempt to call the Backend API endpoint if available
   try {
-    const res = await axios.get('http://localhost:5198/api/cad/export-excel', {
+    const res = await axios.get(`${API_BASE}/api/cad/export-excel`, {
       responseType: 'blob',
       timeout: 2500,
     })
