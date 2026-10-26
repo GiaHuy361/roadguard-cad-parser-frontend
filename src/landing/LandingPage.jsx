@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react'
-import { ArrowRight } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ArrowRight, X, ZoomIn } from 'lucide-react'
 import { linkHandler } from '../navigation'
 
 /* ─────────────────────────────────────────────────────────────
@@ -144,9 +144,9 @@ function OpenStudio({ children = 'Mở Studio', className = '', size = 'md' }) {
   )
 }
 
-function Shot({ src, alt, eager = false, className = '' }) {
+function Shot({ src, alt, title = '', eager = false, onZoom, className = '' }) {
   return (
-    <div className="rounded-lg border border-[#27384E] bg-[#111D2E] overflow-x-auto overflow-y-hidden">
+    <div className="relative group rounded-lg border border-[#27384E] bg-[#111D2E] overflow-x-auto overflow-y-hidden">
       <img
         src={src}
         alt={alt}
@@ -154,8 +154,20 @@ function Shot({ src, alt, eager = false, className = '' }) {
         height="1080"
         loading={eager ? undefined : 'lazy'}
         fetchPriority={eager ? 'high' : undefined}
-        className={`block h-auto w-full min-w-[760px] sm:min-w-0 ${className}`}
+        className={`block h-auto w-full min-w-[760px] sm:min-w-0 ${onZoom ? 'cursor-pointer' : ''} ${className}`}
+        onClick={onZoom ? () => onZoom({ src, alt, title }) : undefined}
       />
+      {onZoom && (
+        <button
+          type="button"
+          onClick={() => onZoom({ src, alt, title })}
+          aria-label={`Phóng to ảnh ${title || alt}`}
+          className="absolute bottom-2.5 right-2.5 flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#0B1220]/85 hover:bg-[#111D2E] border border-[#27384E] text-[11.5px] font-medium text-[#E8EEF6] transition-opacity sm:opacity-75 sm:group-hover:opacity-100 cursor-pointer focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-[#F06421]"
+        >
+          <ZoomIn className="w-3.5 h-3.5 text-[#F06421]" aria-hidden="true" />
+          <span>Phóng to</span>
+        </button>
+      )}
     </div>
   )
 }
@@ -173,8 +185,23 @@ function scrollToSection(e, id) {
 
 export default function LandingPage() {
   const [viewId, setViewId] = useState('gis')
+  const [lightbox, setLightbox] = useState(null)
   const tabRefs = useRef({})
   const view = VIEWS.find((v) => v.id === viewId) || VIEWS[0]
+
+  useEffect(() => {
+    if (!lightbox) return
+    const onKey = (e) => {
+      if (e.key === 'Escape') setLightbox(null)
+    }
+    window.addEventListener('keydown', onKey)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prev
+    }
+  }, [lightbox])
 
   const onTabKey = (e, idx) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
@@ -254,7 +281,13 @@ export default function LandingPage() {
             </div>
 
             <figure className="mt-12 sm:mt-14">
-              <Shot src="/landing/workspace-gis-map.jpg" alt={VIEWS[0].alt} eager />
+              <Shot
+                src="/landing/workspace-gis-map.jpg"
+                alt={VIEWS[0].alt}
+                title={VIEWS[0].title}
+                eager
+                onZoom={setLightbox}
+              />
               <figcaption className="mt-3 text-[12.5px] text-[#7E92AA]">
                 Ảnh chụp thực tế không gian làm việc: thanh nhập dữ liệu, bản đồ GIS và bảng chỉ số kỹ thuật.
               </figcaption>
@@ -352,7 +385,14 @@ export default function LandingPage() {
               aria-labelledby={`tab-${view.id}`}
               className="mt-6"
             >
-              <Shot key={view.id} src={view.src} alt={view.alt} className="landing-fade" />
+              <Shot
+                key={view.id}
+                src={view.src}
+                alt={view.alt}
+                title={view.title}
+                onZoom={setLightbox}
+                className="landing-fade"
+              />
               <div className="mt-4 max-w-[760px]">
                 <h3 className="text-[16px] font-semibold text-white">{view.title}</h3>
                 <p className="mt-1.5 text-[14.5px] leading-relaxed text-[#A9B9CE]">{view.text}</p>
@@ -413,6 +453,52 @@ export default function LandingPage() {
           DXF · VN-2000 · WGS-84 · GeoJSON RFC 7946
         </p>
       </footer>
+
+      {/* ── Lightbox xem ảnh phóng to ── */}
+      {lightbox && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Xem ảnh phóng to"
+          className="fixed inset-0 z-50 flex flex-col bg-[#0B1220]/95 backdrop-blur-sm select-none"
+          onClick={() => setLightbox(null)}
+        >
+          <div
+            className="shrink-0 h-14 px-4 sm:px-6 flex items-center justify-between border-b border-[#27384E] bg-[#111D2E]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 min-w-0 pr-3">
+              <span className="text-[13.5px] font-semibold text-[#E8EEF6] truncate">
+                {lightbox.title || 'CAD & GIS STUDIO'}
+              </span>
+              <span className="hidden sm:inline-block text-[12px] text-[#7E92AA] shrink-0">
+                (Nhấn phím Esc hoặc bấm ra ngoài để đóng)
+              </span>
+            </div>
+            <button
+              type="button"
+              autoFocus
+              onClick={() => setLightbox(null)}
+              aria-label="Đóng xem ảnh phóng to"
+              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#17263C] hover:bg-[#203450] text-[#E8EEF6] border border-[#27384E] text-[12.5px] font-semibold transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-[#F06421]"
+            >
+              <X className="w-4 h-4 text-[#F06421]" aria-hidden="true" />
+              <span>Đóng</span>
+            </button>
+          </div>
+
+          <div
+            className="flex-1 w-full overflow-auto p-3 sm:p-6 flex items-center justify-center cursor-zoom-out"
+          >
+            <img
+              src={lightbox.src}
+              alt={lightbox.alt}
+              className="max-w-none sm:max-w-full max-h-none sm:max-h-full w-auto h-auto rounded border border-[#27384E] shadow-2xl cursor-default"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
