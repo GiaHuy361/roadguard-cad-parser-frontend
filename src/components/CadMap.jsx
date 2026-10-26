@@ -5,6 +5,13 @@ import { Layers, Box, Eye, EyeOff, Compass, Maximize2, Rotate3d, Navigation, Loc
 import toast from 'react-hot-toast'
 
 /* ── Base Map Style Definitions for MapLibre GL ────────────────── */
+// map.isStyleLoaded() also returns false while raster tiles are still downloading, which made
+// the CAD layers silently skip drawing on slower connections (e.g. the deployed site).
+// Layers can be added as soon as the style JSON itself is available.
+const isStyleReady = (map) => {
+  try { return !!(map && map.getStyle()) } catch { return false }
+}
+
 const MAP_STYLES = {
   satellite: {
     version: 8,
@@ -625,7 +632,7 @@ export default function CadMap({
 
   /* ── 4. Hàm cấu hình các Layers AutoCAD / GIS lên MapLibre ─────── */
   const setupCadLayers = useCallback((map, data) => {
-    if (!map || !map.isStyleLoaded()) return
+    if (!isStyleReady(map)) return
 
     const sourceId = 'cad-road-source'
     const existingSource = map.getSource(sourceId)
@@ -1168,7 +1175,7 @@ export default function CadMap({
     if (!map || !mapLoaded) return
 
     const applyData = () => {
-      if (!map.isStyleLoaded()) {
+      if (!isStyleReady(map)) {
         map.once('style.load', applyData)
         return
       }
@@ -1271,7 +1278,7 @@ export default function CadMap({
   /* ── 6. Cập nhật trạng thái hiển thị của các Layers (Toggles) ──── */
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !mapLoaded || !map.isStyleLoaded()) return
+    if (!map || !mapLoaded || !isStyleReady(map)) return
 
     const setVisibility = (layerId, visible) => {
       if (map.getLayer(layerId)) {
