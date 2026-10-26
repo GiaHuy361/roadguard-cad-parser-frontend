@@ -1,59 +1,76 @@
 @import "tailwindcss";
 
-/* ─── Design Tokens ─────────────────────────────────────────── */
+/* ─── RoadGuard CAD & GIS Studio Design Tokens ──────────────── */
 @theme {
-  --color-brand-50:  #eff6ff;
-  --color-brand-100: #dbeafe;
-  --color-brand-200: #bfdbfe;
-  --color-brand-300: #93c5fd;
-  --color-brand-400: #60a5fa;
-  --color-brand-500: #3b82f6;
-  --color-brand-600: #2563eb;
-  --color-brand-700: #1d4ed8;
-  --color-brand-800: #1e40af;
-  --color-brand-900: #1e3a8a;
+  --color-studio-canvas:   #0B1220;
+  --color-studio-panel:    #111D2E;
+  --color-studio-card:     #17263C;
+  --color-studio-hover:    #1E314D;
+  --color-studio-border:   #27384E;
 
-  --color-surface-0:   #ffffff;
-  --color-surface-50:  #f8fafc;
-  --color-surface-100: #f1f5f9;
-  --color-surface-200: #e2e8f0;
-  --color-surface-300: #cbd5e1;
-  --color-surface-500: #64748b;
-  --color-surface-600: #475569;
-  --color-surface-700: #334155;
-  --color-surface-800: #1e293b;
-  --color-surface-900: #0f172a;
+  --color-studio-text:     #E8EEF6;
+  --color-studio-subtext:  #A9B9CE;
+  --color-studio-muted:    #7E92AA;
 
-  --font-family-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --color-brand-orange:    #F06421;
+  --color-brand-orange-hv: #FF7635;
+  --color-gis-cyan:        #22B7C9;
+  --color-gis-cyan-hv:     #35CBE0;
+  --color-status-ok:       #39B58A;
+  --color-status-warn:     #F59E0B;
+  --color-status-err:      #EF4444;
 
-  --shadow-panel: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.07), 4px 0 8px -2px rgb(0 0 0 / 0.04);
-  --shadow-card:  0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-  --shadow-btn:   0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --font-family-sans: 'Inter', 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-/* ─── Global Reset ───────────────────────────────────────────── */
-*, *::before, *::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    background-color: #0B1220;
+    color: #E8EEF6;
+    font-family: var(--font-family-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 }
 
-html, body, #root {
-  height: 100%;
-  width: 100%;
-  overflow: hidden;
-  font-family: var(--font-family-sans);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+/* ─── Engineering Studio Scrollbars ─────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0B1220;
+}
+::-webkit-scrollbar-thumb {
+  background: #27384E;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3B5270;
 }
 
-/* ─── Scrollbar ──────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--color-surface-300); border-radius: 9999px; }
-::-webkit-scrollbar-thumb:hover { background: var(--color-surface-500); }
-
-/* ─── Leaflet override: fix z-index conflicts ────────────────── */
+/* ─── Map & Leaflet Overrides ────────────────────────────────── */
 .leaflet-pane { z-index: 1; }
 .leaflet-top, .leaflet-bottom { z-index: 10; }
 .leaflet-control { z-index: 10; }
+.maplibregl-popup-content {
+  background: #111D2E !important;
+  color: #E8EEF6 !important;
+  border: 1px solid #27384E !important;
+  border-radius: 10px !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55) !important;
+  padding: 12px 14px !important;
+}
+.maplibregl-popup-tip {
+  border-top-color: #111D2E !important;
+  border-bottom-color: #111D2E !important;
+}
+

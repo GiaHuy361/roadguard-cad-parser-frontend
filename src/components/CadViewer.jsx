@@ -43,47 +43,77 @@ export default function CadViewer({ rawDxfFile, onFileLoaded, onStatsLoaded, isV
     if (!dxf?.entities || dxf.entities.length === 0) return null
 
     const pts = []
-    const roadPts = []
-    const roadLayers = ['ENTPLINETUYEN', 'MEPNHUA', 'BO_VIA', 'TIM', 'DUONG', 'VIA', 'LE', 'RANH', 'ROAD']
+    const primaryRoadPts = []
+    const secondaryRoadPts = []
+    const primaryRoadLayers = ['ENTPLINETUYEN', 'MEPNHUA', 'BO_VIA', 'TIM_TUYEN']
+    const secondaryRoadLayers = ['TIM', 'DUONG', 'VIA', 'LE', 'RANH', 'ROAD']
 
     for (let i = 0; i < dxf.entities.length; i++) {
       const e = dxf.entities[i]
       const layerUpper = (e.layer || '').toUpperCase()
-      const isRoad = roadLayers.some(l => layerUpper.includes(l))
+      const isPrimaryRoad = primaryRoadLayers.some((l) => layerUpper.includes(l))
+      const isSecondaryRoad = secondaryRoadLayers.some((l) => layerUpper.includes(l))
       const addPt = (p) => {
         if (p && !isNaN(p.x) && !isNaN(p.y)) {
           pts.push({ x: p.x, y: p.y })
-          if (isRoad) roadPts.push({ x: p.x, y: p.y })
+          if (isPrimaryRoad) primaryRoadPts.push({ x: p.x, y: p.y })
+          if (isPrimaryRoad || isSecondaryRoad) secondaryRoadPts.push({ x: p.x, y: p.y })
         }
       }
-      if (e.vertices) { for (let vt of e.vertices) addPt(vt) }
+      if (e.vertices) {
+        for (let vt of e.vertices) addPt(vt)
+      }
       if (e.start) addPt(e.start)
       if (e.end) addPt(e.end)
       if (e.position) addPt(e.position)
       if (e.center) addPt(e.center)
     }
 
+    const roadPts = primaryRoadPts.length >= 10 ? primaryRoadPts : secondaryRoadPts
     const targetPts = roadPts.length >= 10 ? roadPts : pts
     if (targetPts.length === 0) return null
 
-    // Compute 2% and 98% percentiles to filter out distant title blocks (0,0) or stray points
-    const xs = targetPts.map(p => p.x).sort((a, b) => a - b)
-    const ys = targetPts.map(p => p.y).sort((a, b) => a - b)
+    const xs = targetPts.map((p) => p.x).sort((a, b) => a - b)
+    const ys = targetPts.map((p) => p.y).sort((a, b) => a - b)
     const n = targetPts.length
 
-    const p02_x = xs[Math.floor(n * 0.02)]
-    const p98_x = xs[Math.min(n - 1, Math.floor(n * 0.98))]
-    const p02_y = ys[Math.floor(n * 0.02)]
-    const p98_y = ys[Math.min(n - 1, Math.floor(n * 0.98))]
+    const q15_x = xs[Math.floor(n * 0.15)]
+    const q85_x = xs[Math.min(n - 1, Math.floor(n * 0.85))]
+    const q15_y = ys[Math.floor(n * 0.15)]
+    const q85_y = ys[Math.min(n - 1, Math.floor(n * 0.85))]
 
-    if (p98_x <= p02_x || p98_y <= p02_y) return null
+    const iqrX = Math.max(q85_x - q15_x, 50)
+    const iqrY = Math.max(q85_y - q15_y, 50)
+
+    const lowX = q15_x - 1.25 * iqrX
+    const highX = q85_x + 1.25 * iqrX
+    const lowY = q15_y - 1.25 * iqrY
+    const highY = q85_y + 1.25 * iqrY
+
+    const corePts = targetPts.filter(
+      (p) => p.x >= lowX && p.x <= highX && p.y >= lowY && p.y <= highY
+    )
+    const finalPts = corePts.length >= 4 ? corePts : targetPts
+
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const p of finalPts) {
+      if (p.x < minX) minX = p.x
+      if (p.x > maxX) maxX = p.x
+      if (p.y < minY) minY = p.y
+      if (p.y > maxY) maxY = p.y
+    }
+
+    if (maxX <= minX || maxY <= minY) return null
 
     return {
-      minX: p02_x,
-      maxX: p98_x,
-      minY: p02_y,
-      maxY: p98_y,
-      isRoad: roadPts.length >= 10
+      minX,
+      maxX,
+      minY,
+      maxY,
+      isRoad: roadPts.length >= 10,
     }
   }, [])
 
@@ -178,7 +208,16 @@ export default function CadViewer({ rawDxfFile, onFileLoaded, onStatsLoaded, isV
     }
     viewer.Subscribe('message', onMessage)
 
+    const ro = new ResizeObserver(() => {
+      if (viewerRef.current?.HasRenderer() && el.clientWidth > 0 && el.clientHeight > 0) {
+        viewerRef.current.SetSize(el.clientWidth, el.clientHeight)
+        viewerRef.current.Render()
+      }
+    })
+    ro.observe(el)
+
     return () => {
+      ro.disconnect()
       // Invalidate any in-progress load for this viewer
       loadSeqRef.current += 1
       activeViewerRef.current = null
@@ -598,26 +637,14 @@ export default function CadViewer({ rawDxfFile, onFileLoaded, onStatsLoaded, isV
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 7,
-                  padding: '10px 20px', borderRadius: 10, fontSize: '13px', fontWeight: 700,
-                  background: 'linear-gradient(135deg, #0e7490, #0284c7)', color: '#fff',
-                  border: 'none', cursor: 'pointer',
-                  boxShadow: '0 4px 16px rgba(6,182,212,0.35)',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '10px 22px', borderRadius: 10, fontSize: '13px', fontWeight: 700,
+                  background: '#F06421', color: '#fff',
+                  border: '1px solid #FF7635', cursor: 'pointer',
+                  boxShadow: '0 4px 16px rgba(240,100,33,0.35)',
                 }}
               >
-                <Upload size={14} /> Chọn file CAD
-              </button>
-              <button
-                type="button"
-                onClick={handleLoadSample}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 7,
-                  padding: '10px 20px', borderRadius: 10, fontSize: '13px', fontWeight: 600,
-                  background: 'rgba(30,41,59,0.8)', color: '#94a3b8',
-                  border: '1px solid rgba(51,65,85,0.8)', cursor: 'pointer',
-                }}
-              >
-                <FileCode size={14} /> Mở bản vẽ mẫu
+                <Upload size={15} /> Chọn bản vẽ CAD (.DXF)
               </button>
             </div>
             <input
@@ -634,32 +661,32 @@ export default function CadViewer({ rawDxfFile, onFileLoaded, onStatsLoaded, isV
       {/* ── Loading progress overlay ─────────────────────────────── */}
       {loading && (
         <div className="absolute inset-0 flex flex-col items-center justify-center z-20"
-          style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)' }}>
+          style={{ background: 'rgba(11,18,32,0.82)', backdropFilter: 'blur(6px)' }}>
           <div className="rounded-2xl p-8 text-center"
-            style={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(6,182,212,0.2)', minWidth: 280 }}>
-            <Loader2 size={28} className="animate-spin mx-auto mb-4" style={{ color: '#06b6d4' }} />
-            <p style={{ fontSize: '13px', fontWeight: 700, color: '#f1f5f9', marginBottom: 8 }}>
-              {loadProgress?.phase ?? 'Đang xử lý…'}
+            style={{ background: '#111D2E', border: '1px solid #27384E', minWidth: 280 }}>
+            <Loader2 size={28} className="animate-spin mx-auto mb-4" style={{ color: '#22B7C9' }} />
+            <p style={{ fontSize: '13px', fontWeight: 700, color: '#E8EEF6', marginBottom: 8 }}>
+              {loadProgress?.phase ?? 'Đang xử lý bản vẽ CAD…'}
             </p>
             {loadProgress?.pct != null && (
               <>
                 <div className="w-full rounded-full overflow-hidden mb-2"
-                  style={{ height: 6, background: 'rgba(51,65,85,0.5)' }}>
+                  style={{ height: 6, background: '#0B1220' }}>
                   <div
                     style={{
                       width: `${loadProgress.pct}%`,
                       height: '100%',
-                      background: 'linear-gradient(90deg, #0e7490, #06b6d4)',
+                      background: 'linear-gradient(90deg, #F06421, #22B7C9)',
                       transition: 'width 0.3s ease',
                     }}
                   />
                 </div>
-                <p style={{ fontSize: '11px', color: '#64748b', fontFamily: 'monospace' }}>
+                <p style={{ fontSize: '11px', color: '#A9B9CE', fontFamily: 'monospace' }}>
                   {loadProgress.pct}%
                 </p>
               </>
             )}
-            <p style={{ fontSize: '11px', color: '#475569', marginTop: 8 }}>{fileName}</p>
+            <p style={{ fontSize: '11.5px', color: '#7E92AA', marginTop: 8 }}>{fileName}</p>
           </div>
         </div>
       )}
@@ -668,60 +695,74 @@ export default function CadViewer({ rawDxfFile, onFileLoaded, onStatsLoaded, isV
       {(hasDrawing || loading) && (
         <div className="absolute top-3 left-3 z-10 flex items-center gap-2 flex-wrap">
           {/* File info badge */}
-          <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl"
+          <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-xl"
             style={{
-              background: 'rgba(15,23,42,0.92)',
+              background: 'rgba(17,29,46,0.95)',
               backdropFilter: 'blur(12px)',
-              border: '1px solid rgba(51,65,85,0.8)',
+              border: '1px solid #27384E',
               boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
             }}>
             <span className="w-2 h-2 rounded-full"
-              style={{ background: loading ? '#fbbf24' : '#34d399',
-                       boxShadow: `0 0 8px ${loading ? '#fbbf24' : '#34d399'}` }} />
-            <span style={{ fontSize: '12px', fontWeight: 700, color: '#f1f5f9' }}>
+              style={{ background: loading ? '#F59E0B' : '#39B58A',
+                       boxShadow: `0 0 8px ${loading ? '#F59E0B' : '#39B58A'}` }} />
+            <span style={{ fontSize: '12.5px', fontWeight: 700, color: '#E8EEF6' }}>
               {fileName || 'CAD Workspace'}
             </span>
             {entityCount != null && !loading && (
-              <span style={{ fontSize: '10px', color: '#34d399', fontFamily: 'monospace',
-                background: 'rgba(52,211,153,0.1)', border: '1px solid rgba(52,211,153,0.25)',
-                padding: '1px 7px', borderRadius: 10, fontWeight: 700 }}>
-                {entityCount.toLocaleString()} ent
+              <span style={{ fontSize: '11px', color: '#39B58A', fontFamily: 'monospace',
+                background: 'rgba(57,181,138,0.12)', border: '1px solid rgba(57,181,138,0.3)',
+                padding: '1px 8px', borderRadius: 8, fontWeight: 700 }}>
+                {entityCount.toLocaleString()} đối tượng
               </span>
             )}
             {layers.length > 0 && !loading && (
-              <span style={{ fontSize: '10px', color: '#818cf8', fontFamily: 'monospace',
-                background: 'rgba(129,140,248,0.1)', border: '1px solid rgba(129,140,248,0.25)',
-                padding: '1px 7px', borderRadius: 10, fontWeight: 700 }}>
+              <span style={{ fontSize: '11px', color: '#22B7C9', fontFamily: 'monospace',
+                background: 'rgba(34,183,201,0.12)', border: '1px solid rgba(34,183,201,0.3)',
+                padding: '1px 8px', borderRadius: 8, fontWeight: 700 }}>
                 {layers.length} layers
               </span>
             )}
           </div>
 
           {/* Zoom/View controls */}
-          <div className="flex items-center gap-1 p-1 rounded-xl"
-            style={{ background: 'rgba(15,23,42,0.92)', backdropFilter: 'blur(12px)',
-                     border: '1px solid rgba(51,65,85,0.8)' }}>
+          <div className="flex items-center gap-1.5 p-1 rounded-xl"
+            style={{ background: 'rgba(17,29,46,0.95)', backdropFilter: 'blur(12px)',
+                     border: '1px solid #27384E' }}>
             <button
               type="button"
-              title="Focus Trực Tiếp Vào Tuyến Đường (Khử Outlier)"
+              title="Khớp Tuyến Đường (Loại bỏ khung tên / điểm ngoại lai xa tuyến)"
               onClick={() => fitToScreen(null, false)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition text-xs font-bold"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition text-[12px] font-bold"
               style={{
-                background: 'rgba(6,182,212,0.15)',
-                border: '1px solid rgba(6,182,212,0.4)',
-                color: '#22d3ee',
+                background: '#F06421',
+                border: '1px solid #FF7635',
+                color: '#ffffff',
                 cursor: 'pointer',
               }}
             >
               <Route size={14} />
-              <span>Focus Tuyến Đường</span>
+              <span>Khớp Tuyến Đường</span>
             </button>
-            <div style={{ width: 1, height: 16, background: '#334155', margin: '0 2px' }} />
-            <ToolBtn title="Toàn Bộ Bản Vẽ (Zoom Extents)" onClick={() => fitToScreen(null, true)} Icon={Maximize2} />
-            <ToolBtn title="Zoom In"                       onClick={handleZoomIn}                   Icon={ZoomIn} />
-            <ToolBtn title="Zoom Out"                      onClick={handleZoomOut}                  Icon={ZoomOut} />
-            <ToolBtn title="Reset View"                    onClick={() => fitToScreen(null, false)} Icon={RotateCcw} />
-            <div style={{ width: 1, height: 16, background: '#334155', margin: '0 2px' }} />
+            <button
+              type="button"
+              title="Toàn Bộ Bản Vẽ (Hiển thị toàn bộ phạm vi Extents của file DXF)"
+              onClick={() => fitToScreen(null, true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition text-[12px] font-semibold"
+              style={{
+                background: '#17263C',
+                border: '1px solid #27384E',
+                color: '#E8EEF6',
+                cursor: 'pointer',
+              }}
+            >
+              <Maximize2 size={14} />
+              <span>Toàn Bộ Bản Vẽ</span>
+            </button>
+            <div style={{ width: 1, height: 16, background: '#27384E', margin: '0 2px' }} />
+            <ToolBtn title="Phóng to (Zoom In)"            onClick={handleZoomIn}                   Icon={ZoomIn} />
+            <ToolBtn title="Thu nhỏ (Zoom Out)"            onClick={handleZoomOut}                  Icon={ZoomOut} />
+            <ToolBtn title="Đặt lại góc nhìn (Reset View)" onClick={() => fitToScreen(null, false)} Icon={RotateCcw} />
+            <div style={{ width: 1, height: 16, background: '#27384E', margin: '0 2px' }} />
             {/* Distance measure tool */}
             <button
               type="button"
@@ -732,21 +773,21 @@ export default function CadViewer({ rawDxfFile, onFileLoaded, onStatsLoaded, isV
                 setMeasureStart(null)
                 if (next) toast('Bật chế độ đo: Hãy click 2 điểm trên bản vẽ để đo khoảng cách.', { icon: '📏' })
               }}
-              className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition text-xs font-bold"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition text-[12px] font-semibold"
               style={{
-                background: isMeasuring ? 'rgba(234,179,8,0.2)' : 'transparent',
-                border: isMeasuring ? '1px solid #eab308' : 'none',
-                color: isMeasuring ? '#fde047' : '#94a3b8',
+                background: isMeasuring ? 'rgba(245,158,11,0.2)' : 'transparent',
+                border: isMeasuring ? '1px solid #F59E0B' : 'none',
+                color: isMeasuring ? '#F59E0B' : '#A9B9CE',
                 cursor: 'pointer',
               }}
             >
               <Ruler size={14} />
-              {isMeasuring && <span>Đang đo…</span>}
+              <span>{isMeasuring ? 'Đang đo (Chọn 2 điểm)…' : 'Thước đo'}</span>
             </button>
-            <div style={{ width: 1, height: 16, background: '#334155', margin: '0 2px' }} />
+            <div style={{ width: 1, height: 16, background: '#27384E', margin: '0 2px' }} />
             {/* Open another file */}
             <ToolBtn
-              title="Mở file CAD khác"
+              title="Mở bản vẽ CAD (.dxf) khác"
               onClick={() => fileInputRef.current?.click()}
               Icon={Upload}
             />
@@ -760,16 +801,18 @@ export default function CadViewer({ rawDxfFile, onFileLoaded, onStatsLoaded, isV
             {/* Toggle layer panel */}
             <button
               type="button"
-              title="Quản lý Layers"
+              title="Ẩn/Hiện các Layer trong khung nhìn CAD 2D"
               onClick={() => setShowLayerPanel(p => !p)}
-              className="p-1.5 rounded-lg transition"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition text-[12px] font-semibold"
               style={{
-                background: showLayerPanel ? 'rgba(6,182,212,0.15)' : 'transparent',
-                border: 'none', cursor: 'pointer',
-                color: showLayerPanel ? '#06b6d4' : '#94a3b8',
+                background: showLayerPanel ? 'rgba(34,183,201,0.18)' : 'transparent',
+                border: showLayerPanel ? '1px solid #22B7C9' : 'none',
+                cursor: 'pointer',
+                color: showLayerPanel ? '#22B7C9' : '#A9B9CE',
               }}
             >
-              <Layers size={15} />
+              <Layers size={14} />
+              <span>Layers CAD</span>
             </button>
           </div>
         </div>
@@ -777,50 +820,49 @@ export default function CadViewer({ rawDxfFile, onFileLoaded, onStatsLoaded, isV
 
       {/* ── Layer Manager ────────────────────────────────────────── */}
       {showLayerPanel && layers.length > 0 && (
-        <div className="absolute top-16 right-3 z-20 w-72 rounded-2xl overflow-hidden"
+        <div className="absolute top-16 right-3 z-20 w-72 rounded-xl overflow-hidden"
           style={{
-            background: 'rgba(10,15,30,0.97)',
-            backdropFilter: 'blur(20px)',
-            border: '1px solid rgba(6,182,212,0.2)',
-            boxShadow: '0 16px 50px rgba(0,0,0,0.8)',
+            background: '#111D2E',
+            border: '1px solid #27384E',
+            boxShadow: '0 16px 50px rgba(0,0,0,0.75)',
           }}>
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3"
-            style={{ borderBottom: '1px solid rgba(30,41,59,0.9)' }}>
+            style={{ borderBottom: '1px solid #27384E' }}>
             <div className="flex items-center gap-2">
-              <Layers size={13} style={{ color: '#06b6d4' }} />
-              <span style={{ fontSize: '11px', fontWeight: 800, color: '#f1f5f9',
-                letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                Layers ({layers.length})
+              <Layers size={14} style={{ color: '#22B7C9' }} />
+              <span style={{ fontSize: '12px', fontWeight: 700, color: '#E8EEF6',
+                letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                Layers Bản Vẽ ({layers.length})
               </span>
             </div>
-            <div className="flex gap-1">
+            <div className="flex gap-1.5">
               <button type="button" onClick={handleShowAllLayers}
-                style={{ fontSize: '10px', color: '#06b6d4', padding: '2px 7px',
-                  borderRadius: 4, background: 'rgba(6,182,212,0.1)',
-                  border: '1px solid rgba(6,182,212,0.2)', cursor: 'pointer' }}>
+                style={{ fontSize: '11px', color: '#22B7C9', padding: '2px 8px',
+                  borderRadius: 6, background: '#17263C',
+                  border: '1px solid #27384E', cursor: 'pointer' }}>
                 Hiện hết
               </button>
               <button type="button" onClick={handleHideAllLayers}
-                style={{ fontSize: '10px', color: '#64748b', padding: '2px 7px',
-                  borderRadius: 4, background: 'rgba(51,65,85,0.2)',
-                  border: '1px solid rgba(51,65,85,0.3)', cursor: 'pointer' }}>
+                style={{ fontSize: '11px', color: '#A9B9CE', padding: '2px 8px',
+                  borderRadius: 6, background: '#17263C',
+                  border: '1px solid #27384E', cursor: 'pointer' }}>
                 Ẩn hết
               </button>
             </div>
           </div>
 
           {/* Layer list */}
-          <div className="overflow-y-auto p-2 space-y-0.5" style={{ maxHeight: '55vh' }}>
+          <div className="overflow-y-auto p-2 space-y-1" style={{ maxHeight: '55vh' }}>
             {layers.map(lyr => (
               <div
                 key={lyr.name}
                 onClick={() => handleToggleLayer(lyr.name)}
                 className="flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors"
                 style={{
-                  background: lyr.visible ? 'rgba(30,41,59,0.5)' : 'transparent',
+                  background: lyr.visible ? '#17263C' : 'transparent',
                   border: '1px solid',
-                  borderColor: lyr.visible ? 'rgba(51,65,85,0.5)' : 'transparent',
+                  borderColor: lyr.visible ? '#27384E' : 'transparent',
                 }}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
@@ -828,23 +870,23 @@ export default function CadViewer({ rawDxfFile, onFileLoaded, onStatsLoaded, isV
                     className="shrink-0 w-3 h-3 rounded-full"
                     style={{
                       background: lyr.color === '#000000' || lyr.color === '#000'
-                        ? '#555'     // avoid invisible black dot on black bg
+                        ? '#7E92AA'
                         : lyr.color,
-                      border: '1px solid rgba(255,255,255,0.15)',
+                      border: '1px solid rgba(255,255,255,0.2)',
                     }}
                   />
                   <span style={{
-                    fontSize: '11px',
+                    fontSize: '12px',
                     fontWeight: lyr.visible ? 600 : 400,
-                    color: lyr.visible ? '#e2e8f0' : '#475569',
+                    color: lyr.visible ? '#E8EEF6' : '#7E92AA',
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                     fontFamily: 'monospace',
                   }}>
                     {lyr.name || '(default)'}
                   </span>
                 </div>
-                <span style={{ color: lyr.visible ? '#06b6d4' : '#334155', flexShrink: 0 }}>
-                  {lyr.visible ? <Eye size={13} /> : <EyeOff size={13} />}
+                <span style={{ color: lyr.visible ? '#22B7C9' : '#7E92AA', flexShrink: 0 }}>
+                  {lyr.visible ? <Eye size={14} /> : <EyeOff size={14} />}
                 </span>
               </div>
             ))}
@@ -855,62 +897,70 @@ export default function CadViewer({ rawDxfFile, onFileLoaded, onStatsLoaded, isV
       {/* ── Dynamic Floating Coordinate HUD near Cursor ─────────── */}
       {cursorCoords && hasDrawing && (
         <div
-          className="pointer-events-none absolute z-30 px-2.5 py-1 rounded-md bg-slate-950/85 border border-cyan-500/40 text-[10px] font-mono text-cyan-300 backdrop-blur shadow-2xl flex items-center gap-2"
+          className="pointer-events-none absolute z-30 px-2.5 py-1 rounded-md bg-[#111D2E]/95 border border-[#22B7C9]/50 text-[11px] font-mono tabular-nums text-[#E8EEF6] backdrop-blur shadow-2xl flex items-center gap-2"
           style={{
-            left: `min(${cursorCoords.px + 14}px, calc(100% - 175px))`,
+            left: `min(${cursorCoords.px + 14}px, calc(100% - 190px))`,
             top: Math.max(cursorCoords.py - 28, 12),
           }}
         >
-          <span style={{ color: '#f87171' }}>X:</span> {cursorCoords.x.toFixed(2)}
-          <span style={{ color: '#475569' }}>|</span>
-          <span style={{ color: '#4ade80' }}>Y:</span> {cursorCoords.y.toFixed(2)}
+          <span style={{ color: '#F06421', fontWeight: 700 }}>E/X:</span> {cursorCoords.x.toFixed(2)}
+          <span style={{ color: '#27384E' }}>|</span>
+          <span style={{ color: '#39B58A', fontWeight: 700 }}>N/Y:</span> {cursorCoords.y.toFixed(2)}
         </div>
       )}
 
       {/* ── Bottom status bar with Live AutoCAD XYZ coordinates ──── */}
       <div className="absolute bottom-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-1.5 flex-wrap gap-2"
         style={{
-          background: 'rgba(5,10,20,0.92)',
-          borderTop: '1px solid rgba(30,41,59,0.8)',
+          background: 'rgba(11,18,32,0.95)',
+          borderTop: '1px solid #27384E',
           backdropFilter: 'blur(10px)',
           fontFamily: 'monospace',
-          fontSize: '11px',
-          color: '#475569',
+          fontSize: '11.5px',
+          color: '#A9B9CE',
         }}>
         
         {/* Left: Dynamic Live Coordinates readout */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2.5 px-3 py-1 rounded-lg bg-slate-950 border border-cyan-500/40 font-mono shadow-inner">
-            <span style={{ fontSize: '10px', fontWeight: 800, color: '#38bdf8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-              Tọa độ XYZ:
+          <div className="flex items-center gap-2.5 px-3 py-1 rounded-lg bg-[#111D2E] border border-[#27384E] font-mono tabular-nums">
+            <span style={{ fontSize: '11px', fontWeight: 700, color: '#22B7C9' }}>
+              Tọa độ con trỏ CAD:
             </span>
-            <div className="flex items-center gap-1">
-              <span style={{ color: '#f87171', fontWeight: 800 }}>X</span>
-              <span style={{ color: '#22d3ee', fontWeight: 800, minWidth: 95, display: 'inline-block' }}>
-                {cursorCoords ? cursorCoords.x.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : '593,248.120'}
+            {cursorCoords ? (
+              <>
+                <div className="flex items-center gap-1">
+                  <span style={{ color: '#F06421', fontWeight: 700 }}>X(CAD)</span>
+                  <span style={{ color: '#E8EEF6', fontWeight: 700, minWidth: 95, display: 'inline-block' }}>
+                    {cursorCoords.x.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
+                  </span>
+                </div>
+                <span style={{ color: '#27384E' }}>|</span>
+                <div className="flex items-center gap-1">
+                  <span style={{ color: '#39B58A', fontWeight: 700 }}>Y(CAD)</span>
+                  <span style={{ color: '#E8EEF6', fontWeight: 700, minWidth: 105, display: 'inline-block' }}>
+                    {cursorCoords.y.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
+                  </span>
+                </div>
+                <span style={{ color: '#27384E' }}>|</span>
+                <div className="flex items-center gap-1">
+                  <span style={{ color: '#F59E0B', fontWeight: 700 }}>Z</span>
+                  <span style={{ color: '#E8EEF6', fontWeight: 700 }}>
+                    {cursorCoords.z.toFixed(3)}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <span style={{ color: '#7E92AA', fontFamily: 'Inter, sans-serif', fontSize: '12px' }}>
+                Di chuột trên bản vẽ để xem tọa độ thực
               </span>
-            </div>
-            <span style={{ color: '#334155' }}>|</span>
-            <div className="flex items-center gap-1">
-              <span style={{ color: '#4ade80', fontWeight: 800 }}>Y</span>
-              <span style={{ color: '#22d3ee', fontWeight: 800, minWidth: 105, display: 'inline-block' }}>
-                {cursorCoords ? cursorCoords.y.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : '1,203,842.550'}
-              </span>
-            </div>
-            <span style={{ color: '#334155' }}>|</span>
-            <div className="flex items-center gap-1">
-              <span style={{ color: '#fbbf24', fontWeight: 800 }}>Z</span>
-              <span style={{ color: '#e2e8f0', fontWeight: 700, minWidth: 45, display: 'inline-block' }}>
-                {cursorCoords ? cursorCoords.z.toFixed(3) : '0.000'}
-              </span>
-            </div>
+            )}
           </div>
 
           {measureResult && (
-            <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-cyan-950/80 border border-cyan-400 text-xs font-mono text-cyan-200">
-              <Ruler size={13} className="text-cyan-400" />
-              <span>Khoảng cách: <strong className="text-cyan-300 font-bold">{measureResult.dist.toFixed(3)} m</strong> (ΔX: {measureResult.dx.toFixed(2)}m, ΔY: {measureResult.dy.toFixed(2)}m)</span>
-              <button type="button" onClick={() => setMeasureResult(null)} className="ml-1 text-slate-400 hover:text-white cursor-pointer">×</button>
+            <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-[#17263C] border border-[#22B7C9] text-xs font-mono tabular-nums text-[#E8EEF6]">
+              <Ruler size={13} className="text-[#22B7C9]" />
+              <span>Khoảng cách: <strong className="text-[#22B7C9] font-bold">{measureResult.dist.toFixed(3)} m</strong> (ΔX: {measureResult.dx.toFixed(2)}m, ΔY: {measureResult.dy.toFixed(2)}m)</span>
+              <button type="button" onClick={() => setMeasureResult(null)} className="ml-1 text-[#A9B9CE] hover:text-white cursor-pointer">×</button>
             </div>
           )}
         </div>
@@ -918,9 +968,9 @@ export default function CadViewer({ rawDxfFile, onFileLoaded, onStatsLoaded, isV
         {/* Right: Technical system info */}
         <div className="flex items-center gap-4">
           {hasDrawing && (
-            <span style={{ color: '#34d399', fontWeight: 600 }}>✓ Hệ tọa độ VN-2000 / UTM (Mét)</span>
+            <span style={{ color: '#39B58A', fontWeight: 600 }}>✓ Tọa độ phẳng gốc bản vẽ CAD (Đơn vị: Mét)</span>
           )}
-          <span style={{ color: '#06b6d4', fontWeight: 700 }}>dxf-viewer v1.x · three.js WebGL</span>
+          <span style={{ color: '#7E92AA', fontWeight: 600 }}>WebGL CAD Engine</span>
         </div>
       </div>
     </div>

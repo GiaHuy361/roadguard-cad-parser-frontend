@@ -28,6 +28,14 @@ export async function downloadExcelReport({ geoJsonData, analyticsData, roadPara
     const stats = enriched.analytics || analyticsData || {}
     const features = effectiveGeoJson?.features || []
 
+    if (stats.isSurfaceAreaProvisional) {
+      toast.error(
+        `Bề rộng mặt đường đã đổi từ ${stats.analyzedRoadWidth}m sang ${params.roadWidth}m. Vui lòng bấm "Phân Tích & Dựng Tuyến Lại" để tính lại đa giác mặt đường chính xác trước khi xuất hồ sơ chính thức.`,
+        { id: tid, duration: 5000 }
+      )
+      return
+    }
+
     const wb = XLSX.utils.book_new()
 
     const cm = stats.centralMeridian ?? effectiveGeoJson?.centralMeridian ?? '105.75'
@@ -48,7 +56,7 @@ export async function downloadExcelReport({ geoJsonData, analyticsData, roadPara
     // ── Sheet 1: "Tong Hop Khoi Luong" ──────────────────────────────
     const summaryRows = [
       ['HỒ SƠ TỔNG HỢP KHỐI LƯỢNG & THÔNG SỐ HÌNH HỌC TUYẾN ĐƯỜNG'],
-      ['Công cụ kết xuất:', 'RoadGuard CAD & GIS Studio (Standalone Engineering Tool)'],
+      ['Công cụ kết xuất:', 'CAD & GIS STUDIO'],
       ['Thời điểm xuất hồ sơ:', new Date().toLocaleString('vi-VN')],
       ['Hệ tọa độ gốc (Source CRS):', `VN-2000 | Kinh tuyến trục ${cm}° | ${zoneLabel} | Quy ước trục: ${axisOrder}`],
       ['Hệ tọa độ đích (Target CRS):', 'WGS-84 (EPSG:4326) – Chuẩn GeoJSON RFC 7946 [Longitude, Latitude]'],
@@ -282,7 +290,7 @@ export async function downloadExcelReport({ geoJsonData, analyticsData, roadPara
     ]
     XLSX.utils.book_append_sheet(wb, wsSlabs, 'Bang Ke Tam BTXM')
 
-    XLSX.writeFile(wb, 'RoadGuard_BaoCaoKhoiLuong.xlsx')
+    XLSX.writeFile(wb, 'CAD_GIS_Studio_BaoCaoKhoiLuong.xlsx')
     toast.success('Đã xuất hồ sơ khối lượng Excel (3 Sheets) thành công!', { id: tid })
   } catch (err) {
     console.error('Error generating Excel file:', err)

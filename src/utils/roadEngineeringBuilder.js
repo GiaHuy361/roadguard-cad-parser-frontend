@@ -938,10 +938,19 @@ export function enrichGeoJsonWithEngineeringFeatures(
   const nominalAreaSqm = Number((effectiveTotalLength * params.roadWidth).toFixed(2))
   const baseRoadWidth = Number(geoJsonInput?.originalBackendRoadWidth || geoJsonInput?.roadWidth) || params.roadWidth
   const rawSurfaceArea = Number(geoJsonInput?.originalSurfaceAreaSqm ?? geoJsonInput?.surfaceAreaSqm)
+  const isSurfaceAreaProvisional = Boolean(
+    geoJsonInput?.originalBackendRoadWidth &&
+      Math.abs(params.roadWidth - Number(geoJsonInput.originalBackendRoadWidth)) > 1e-3
+  )
   const surfaceAreaSqm =
     rawSurfaceArea > 0 && baseRoadWidth > 0
       ? Number(((rawSurfaceArea * params.roadWidth) / baseRoadWidth).toFixed(2))
       : nominalAreaSqm
+
+  const hasAuthentic3DElevation = Boolean(
+    Array.isArray(mainCenterlineCoords) &&
+      mainCenterlineCoords.some((pt) => Array.isArray(pt) && pt.length >= 3 && Number.isFinite(pt[2]) && Math.abs(pt[2]) > 1e-4)
+  )
 
   const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now()
   const elapsedMs = Math.max(1, Math.round(t1 - t0))
@@ -949,6 +958,9 @@ export function enrichGeoJsonWithEngineeringFeatures(
   const analytics = {
     totalLengthMeters: effectiveTotalLength,
     roadWidth: params.roadWidth,
+    analyzedRoadWidth: baseRoadWidth,
+    isSurfaceAreaProvisional,
+    hasAuthentic3DElevation,
     laneCount: params.laneCount,
     slabLength: params.slabLength,
     slabWidth: params.slabWidth,
@@ -975,6 +987,9 @@ export function enrichGeoJsonWithEngineeringFeatures(
     bbox,
     bounds,
     roadWidth: params.roadWidth,
+    analyzedRoadWidth: baseRoadWidth,
+    isSurfaceAreaProvisional,
+    hasAuthentic3DElevation,
     totalLengthMeters: effectiveTotalLength,
     nominalAreaSqm,
     surfaceAreaSqm,

@@ -146,7 +146,7 @@ export default function CadMap({
   const popupRef = useRef(null)
   const lastFocusedTimestampRef = useRef(null)
   const lastFittedGeoJsonRef = useRef(null)
-  const [is3D, setIs3D] = useState(true)
+  const [is3D, setIs3D] = useState(false)
   const [mapLoaded, setMapLoaded] = useState(false)
 
   /* ── 1. Chuẩn hóa dữ liệu GeoJSON sang [lng, lat] & Nội suy Tấm BTXM / Cọc (Single Source of Truth) ── */
@@ -177,9 +177,9 @@ export default function CadMap({
       container: mapContainerRef.current,
       style: initialStyle,
       center: [105.8528, 10.8879],
-      zoom: 14.5,
-      pitch: 52,        // Góc nghiêng 3D kỹ thuật mặc định 52 độ
-      bearing: -24,     // Xoay hướng nhìn dọc theo hành lang tuyến
+      zoom: 15,
+      pitch: 0,         // Mặc định góc nhìn phẳng 2D trực diện để tuyến đường nổi bật rõ nhất
+      bearing: 0,
       antialias: true,
       maxPitch: 85,
     })
@@ -191,9 +191,21 @@ export default function CadMap({
     map.on('load', () => {
       mapRef.current = map
       setMapLoaded(true)
+      map.resize()
     })
 
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      const w = entry?.contentRect?.width || mapContainerRef.current?.clientWidth || 0
+      const h = entry?.contentRect?.height || mapContainerRef.current?.clientHeight || 0
+      if (mapRef.current && w > 0 && h > 0) {
+        mapRef.current.resize()
+      }
+    })
+    ro.observe(mapContainerRef.current)
+
     return () => {
+      ro.disconnect()
       map.remove()
       mapRef.current = null
       setMapLoaded(false)
@@ -303,8 +315,8 @@ export default function CadMap({
       },
       paint: {
         'line-color': '#FFFFFF',      // Vạch biên trắng tinh
-        'line-width': 2.0,            // Bề dày chuẩn 2px
-        'line-opacity': 0.95,
+        'line-width': 2.5,            // Bề dày chuẩn 2.5px nổi bật trên ảnh vệ tinh
+        'line-opacity': 0.98,
       },
     })
 
@@ -657,9 +669,9 @@ export default function CadMap({
         visibility: showStations ? 'visible' : 'none',
       },
       paint: {
-        'circle-radius': 5.5,
+        'circle-radius': 6.0,
         'circle-color': '#06b6d4',     // Cyan nổi bật
-        'circle-stroke-width': 2.0,
+        'circle-stroke-width': 2.2,
         'circle-stroke-color': '#ffffff',
       },
     })
@@ -673,14 +685,14 @@ export default function CadMap({
       layout: {
         visibility: showStations ? 'visible' : 'none',
         'text-field': ['get', 'name'],
-        'text-size': 11,
-        'text-offset': [0, -1.8],
+        'text-size': 12,
+        'text-offset': [0, -1.7],
         'text-allow-overlap': true,
       },
       paint: {
-        'text-color': '#38bdf8',
-        'text-halo-color': '#0a0f1d',
-        'text-halo-width': 2.0,
+        'text-color': '#7dd3fc',
+        'text-halo-color': '#0b1220',
+        'text-halo-width': 2.4,
       },
     })
 
@@ -768,16 +780,21 @@ export default function CadMap({
 
       // Chỉ fitBounds khi nạp dữ liệu CAD mới lần đầu hoặc đổi file, không fitBounds khi đổi checkbox
       if (cleanGeoJson && geoJsonData && geoJsonData !== lastFittedGeoJsonRef.current) {
-        lastFittedGeoJsonRef.current = geoJsonData
-        const bounds = computeGeoJsonBounds(cleanGeoJson)
-        if (bounds) {
-          map.fitBounds(bounds, {
-            padding: { top: 90, bottom: 90, left: 90, right: 90 },
-            pitch: is3D ? 52 : 0,
-            bearing: is3D ? -24 : 0,
-            duration: 1200,
-            maxZoom: 16,
-          })
+        const w = mapContainerRef.current?.clientWidth || 0
+        const h = mapContainerRef.current?.clientHeight || 0
+        if (w > 0 && h > 0) {
+          lastFittedGeoJsonRef.current = geoJsonData
+          map.resize()
+          const bounds = computeGeoJsonBounds(cleanGeoJson)
+          if (bounds) {
+            map.fitBounds(bounds, {
+              padding: { top: 80, bottom: 80, left: 80, right: 80 },
+              pitch: is3D ? 50 : 0,
+              bearing: is3D ? -20 : 0,
+              duration: 600,
+              maxZoom: 16.5,
+            })
+          }
         }
       }
     }
@@ -814,10 +831,10 @@ export default function CadMap({
 
     if (bounds) {
       map.fitBounds(bounds, {
-        padding: { top: 120, bottom: 120, left: 120, right: 120 },
-        pitch: is3D ? 58 : 0,
+        padding: { top: 100, bottom: 100, left: 100, right: 100 },
+        pitch: is3D ? 55 : 0,
         bearing: is3D ? -24 : 0,
-        duration: 900,
+        duration: 850,
         maxZoom: 18,
       })
       const rangeText = focusedSegment.range || `${focusedSegment.startM ?? 0}m - ${focusedSegment.endM ?? 100}m`
@@ -840,13 +857,13 @@ export default function CadMap({
         .setHTML(`
           <div style="font-family: Inter, sans-serif; color: #f8fafc; min-width: 175px;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 5px;">
-              <span style="font-weight: 800; font-size: 13px; color: #38bdf8;">📍 ${focusedSegment.id}</span>
-              <span style="font-size: 10px; background: rgba(56,189,248,0.18); color: #7dd3fc; padding: 2px 6px; border-radius: 4px; font-weight: 600;">KHẢO SÁT DRONE</span>
+              <span style="font-weight: 800; font-size: 13px; color: #38bdf8;">${focusedSegment.id}</span>
+              <span style="font-size: 11px; color: #94a3b8; font-weight: 600;">Phân đoạn</span>
             </div>
-            <div style="font-size: 11px; color: #94a3b8; display: flex; flex-direction: column; gap: 3px;">
+            <div style="font-size: 12px; color: #cbd5e1; display: flex; flex-direction: column; gap: 3px;">
               <div>Lý trình: <strong style="color: #ffffff;">${rangeText}</strong></div>
               <div>Chiều dài: <strong style="color: #38bdf8;">${focusedSegment.length || 100}m</strong></div>
-              <div>Trạng thái: <strong style="color: ${isDone ? '#34d399' : '#fbbf24'};">${isDone ? '✓ Đã bay khảo sát' : '⏳ Chờ bay'}</strong></div>
+              <div>Trạng thái: <strong style="color: ${isDone ? '#34d399' : '#fbbf24'};">${isDone ? '✓ Đã hoàn thành' : 'Chưa hoàn thành'}</strong></div>
             </div>
           </div>
         `)
@@ -906,16 +923,15 @@ export default function CadMap({
     if (isSlab) {
       html = `
         <div style="font-family:Inter,sans-serif;min-width:220px;color:#f1f5f9">
-          <div style="font-size:13px;font-weight:800;color:#38bdf8;margin-bottom:6px;border-bottom:1px solid rgba(56,189,248,0.3);padding-bottom:4px;display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:13px;font-weight:700;color:#38bdf8;margin-bottom:6px;border-bottom:1px solid #27384e;padding-bottom:4px;display:flex;align-items:center;justify-content:space-between">
             <span>TẤM BÊ TÔNG ${p.code}</span>
-            <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(16,185,129,0.2);color:#34d399;border:1px solid rgba(16,185,129,0.4)">TCVN</span>
+            <span style="font-size:11px;color:#39b58a;font-weight:600">TCVN</span>
           </div>
-          <table style="width:100%;font-size:11px;border-collapse:collapse">
+          <table style="width:100%;font-size:12px;border-collapse:collapse">
             <tr><td style="color:#94a3b8;padding:2px 0">Lý trình:</td><td style="color:#fbbf24;font-weight:700">${p.chainage}</td></tr>
-            <tr><td style="color:#94a3b8;padding:2px 0">Phân đoạn Drone:</td><td style="color:#38bdf8;font-weight:700">${p.segment}</td></tr>
+            <tr><td style="color:#94a3b8;padding:2px 0">Phân đoạn:</td><td style="color:#38bdf8;font-weight:700">${p.segment}</td></tr>
             <tr><td style="color:#94a3b8;padding:2px 0">Kích thước tấm:</td><td style="color:#e2e8f0;font-weight:600">${p.dimensions}</td></tr>
-            <tr><td style="color:#94a3b8;padding:2px 0">Quy chuẩn:</td><td style="color:#94a3b8">TCVN 10380:2014</td></tr>
-            <tr><td style="color:#94a3b8;padding:2px 0">Khuyết tật mặt:</td><td style="color:#10b981;font-weight:700">✓ Đạt chuẩn (Không nứt)</td></tr>
+            <tr><td style="color:#94a3b8;padding:2px 0">Quy chuẩn:</td><td style="color:#cbd5e1">TCVN 10380:2014</td></tr>
           </table>
         </div>
       `
@@ -923,10 +939,10 @@ export default function CadMap({
       const isExp = p.type === 'ExpansionJoint'
       html = `
         <div style="font-family:Inter,sans-serif;min-width:210px;color:#f1f5f9">
-          <div style="font-size:12px;font-weight:800;color:${isExp ? '#f97316' : '#67e8f9'};margin-bottom:6px;border-bottom:1px solid rgba(249,115,22,0.3);padding-bottom:4px">
+          <div style="font-size:12.5px;font-weight:700;color:${isExp ? '#f97316' : '#67e8f9'};margin-bottom:6px;border-bottom:1px solid #27384e;padding-bottom:4px">
             ${isExp ? 'KHE CO GIÃN NHIỆT (EXPANSION)' : 'KHE CO / KHE UỐN (CONTRACTION)'}
           </div>
-          <table style="width:100%;font-size:11px;border-collapse:collapse">
+          <table style="width:100%;font-size:12px;border-collapse:collapse">
             <tr><td style="color:#94a3b8;padding:2px 0">Lý trình:</td><td style="color:#fbbf24;font-weight:700">${p.chainage}</td></tr>
             <tr><td style="color:#94a3b8;padding:2px 0">Kết cấu:</td><td style="color:#e2e8f0;font-weight:600">${isExp ? 'Chèn xốp bitum 20mm + thanh truyền lực' : 'Cắt ron 5mm + keo trám silicon'}</td></tr>
             <tr><td style="color:#94a3b8;padding:2px 0">Khoảng cách:</td><td style="color:#34d399;font-weight:600">${isExp ? 'Định kỳ 100m' : 'Mỗi tấm 4.0m'}</td></tr>
@@ -936,11 +952,11 @@ export default function CadMap({
     } else if (isStation) {
       html = `
         <div style="font-family:Inter,sans-serif;min-width:200px;color:#f1f5f9">
-          <div style="font-size:12px;font-weight:800;color:#06b6d4;margin-bottom:6px;border-bottom:1px solid rgba(6,182,212,0.3);padding-bottom:4px">
+          <div style="font-size:12.5px;font-weight:700;color:#06b6d4;margin-bottom:6px;border-bottom:1px solid #27384e;padding-bottom:4px">
             CỌC LÝ TRÌNH CÔNG TRÌNH
           </div>
-          <table style="width:100%;font-size:11px;border-collapse:collapse">
-            <tr><td style="color:#94a3b8;padding:2px 0">Ký hiệu mốc:</td><td style="color:#38bdf8;font-weight:800;font-size:13px">${p.name}</td></tr>
+          <table style="width:100%;font-size:12px;border-collapse:collapse">
+            <tr><td style="color:#94a3b8;padding:2px 0">Ký hiệu mốc:</td><td style="color:#38bdf8;font-weight:700;font-size:13px">${p.name}</td></tr>
             <tr><td style="color:#94a3b8;padding:2px 0">Khoảng cách từ gốc:</td><td style="color:#fbbf24;font-weight:700">${p.distMeters} m</td></tr>
           </table>
         </div>
@@ -950,31 +966,31 @@ export default function CadMap({
       const catColor = cat === 'Building' ? '#c084fc' : cat === 'Drainage' ? '#06b6d4' : cat === 'RoadNetwork' ? '#f59e0b' : '#38bdf8'
       html = `
         <div style="font-family:Inter,sans-serif;min-width:220px;color:#f1f5f9">
-          <div style="font-size:12px;font-weight:800;color:${catColor};margin-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:4px;display:flex;align-items:center;justify-content:space-between">
-            <span>🏷️ LAYER: ${p.layer}</span>
-            <span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,0.12);color:#ffffff;font-weight:600">${cat}</span>
+          <div style="font-size:12.5px;font-weight:700;color:${catColor};margin-bottom:6px;border-bottom:1px solid #27384e;padding-bottom:4px;display:flex;align-items:center;justify-content:space-between">
+            <span>LAYER: ${p.layer}</span>
+            <span style="font-size:11px;color:#cbd5e1;font-weight:600">${cat}</span>
           </div>
-          <table style="width:100%;font-size:11px;border-collapse:collapse">
+          <table style="width:100%;font-size:12px;border-collapse:collapse">
             <tr><td style="color:#94a3b8;padding:2px 0">Đối tượng:</td><td style="color:#f8fafc;font-weight:600">${p.name || p.layer}</td></tr>
             <tr><td style="color:#94a3b8;padding:2px 0">Hình học:</td><td style="color:#38bdf8;font-weight:600">${feature.geometry?.type}</td></tr>
-            ${p.cadEntity ? `<tr><td style="color:#94a3b8;padding:2px 0">Thực thể CAD:</td><td style="color:#e2e8f0;font-family:monospace;font-size:10px">${p.cadEntity}</td></tr>` : ''}
+            ${p.cadEntity ? `<tr><td style="color:#94a3b8;padding:2px 0">Thực thể CAD:</td><td style="color:#e2e8f0;font-family:monospace;font-size:11.5px">${p.cadEntity}</td></tr>` : ''}
             ${p.elevation ? `<tr><td style="color:#94a3b8;padding:2px 0">Cao độ (Z):</td><td style="color:#fbbf24;font-weight:600">${p.elevation} m</td></tr>` : ''}
-            <tr><td style="color:#94a3b8;padding:2px 0">Tọa độ GPS:</td><td style="color:#fbbf24;font-family:monospace;font-size:10px">${e.lngLat.lng.toFixed(6)}, ${e.lngLat.lat.toFixed(6)}</td></tr>
+            <tr><td style="color:#94a3b8;padding:2px 0">Tọa độ GPS:</td><td style="color:#fbbf24;font-family:monospace;font-size:11.5px">${e.lngLat.lng.toFixed(6)}, ${e.lngLat.lat.toFixed(6)}</td></tr>
           </table>
         </div>
       `
     } else {
       html = `
         <div style="font-family:Inter,sans-serif;min-width:200px;color:#f1f5f9">
-          <div style="font-size:12px;font-weight:800;color:${isIsland ? '#f59e0b' : '#22d3ee'};margin-bottom:6px;border-bottom:1px solid rgba(${isIsland ? '245,158,11' : '6,182,212'},0.3);padding-bottom:4px">
+          <div style="font-size:12.5px;font-weight:700;color:${isIsland ? '#f59e0b' : '#22d3ee'};margin-bottom:6px;border-bottom:1px solid #27384e;padding-bottom:4px">
             ${name}
           </div>
-          <table style="width:100%;font-size:11px;border-collapse:collapse">
+          <table style="width:100%;font-size:12px;border-collapse:collapse">
             <tr><td style="color:#94a3b8;padding:2px 0">Phân loại:</td><td style="color:#e2e8f0;font-weight:600">${type}</td></tr>
-            ${type === 'Vertex' ? `<tr><td style="color:#94a3b8;padding:2px 0">Tọa độ WGS84:</td><td style="color:#fbbf24;font-family:monospace;font-size:10px">${Number(p.lat).toFixed(6)}, ${Number(p.lng).toFixed(6)}</td></tr>` : ''}
+            ${type === 'Vertex' ? `<tr><td style="color:#94a3b8;padding:2px 0">Tọa độ WGS84:</td><td style="color:#fbbf24;font-family:monospace;font-size:11.5px">${Number(p.lat).toFixed(6)}, ${Number(p.lng).toFixed(6)}</td></tr>` : ''}
             ${type !== 'Vertex' && !isIsland ? `<tr><td style="color:#94a3b8;padding:2px 0">Bề rộng dải:</td><td style="color:#38bdf8;font-weight:700">${width} m</td></tr>` : ''}
             ${isIsland ? `<tr><td style="color:#94a3b8;padding:2px 0">Kết cấu:</td><td style="color:#fbbf24;font-weight:600">Đảo tam giác / Bó vỉa hè</td></tr>` : ''}
-            ${type !== 'Vertex' && !isIsland ? `<tr><td style="color:#94a3b8;padding:2px 0">Vật liệu:</td><td style="color:#34d399;font-weight:600">Bê tông xi măng (#71717a)</td></tr>` : ''}
+            ${type !== 'Vertex' && !isIsland ? `<tr><td style="color:#94a3b8;padding:2px 0">Vật liệu:</td><td style="color:#34d399;font-weight:600">Bê tông xi măng</td></tr>` : ''}
             ${len ? `<tr><td style="color:#94a3b8;padding:2px 0">Chiều dài:</td><td style="color:#fbbf24;font-weight:700">${len}</td></tr>` : ''}
           </table>
         </div>
@@ -997,9 +1013,9 @@ export default function CadMap({
     setIs3D(nextIs3D)
 
     map.easeTo({
-      pitch: nextIs3D ? 55 : 0,
-      bearing: nextIs3D ? -25 : 0,
-      duration: 1000,
+      pitch: nextIs3D ? 52 : 0,
+      bearing: nextIs3D ? -20 : 0,
+      duration: 850,
     })
   }
 
@@ -1010,34 +1026,34 @@ export default function CadMap({
       toast.error('Chưa có dữ liệu tuyến đường để định vị.')
       return
     }
+    map.resize()
     const bounds = computeGeoJsonBounds(cleanGeoJson)
     if (bounds) {
       map.fitBounds(bounds, {
-        padding: { top: 90, bottom: 90, left: 90, right: 90 },
-        pitch: is3D ? 52 : 0,
-        bearing: is3D ? -24 : 0,
-        duration: 1100,
+        padding: { top: 80, bottom: 80, left: 80, right: 80 },
+        pitch: is3D ? 50 : 0,
+        bearing: is3D ? -20 : 0,
+        duration: 600,
         maxZoom: 16.5,
       })
-      toast.success('Đã định vị camera về toàn bộ tuyến đường!')
     }
   }
 
   return (
-    <div className="relative w-full h-full overflow-hidden" style={{ background: '#0a0f1e' }}>
+    <div className="relative w-full h-full overflow-hidden bg-[#0B1220]">
       {/* ── MapLibre WebGL Canvas Container ─────────────────────── */}
       <div ref={mapContainerRef} className="w-full h-full" />
 
-      {/* ── 3D View & Focus Controls Toolbar (Floating Top Right) ── */}
-      <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
+      {/* ── 3D View & Focus Controls Toolbar (Clear of MapLibre NavControl) ── */}
+      <div className="absolute top-3 right-14 z-10 flex items-center gap-2">
         {/* Nút Định vị về toàn tuyến (Focus Road Extent) */}
         <button
           type="button"
           onClick={handleFitRoad}
-          title="Định vị camera về trung tâm toàn bộ tuyến đường CAD (Focus Road Extent)"
-          className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer select-none bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/40 backdrop-blur-md shadow-lg shadow-blue-600/30 hover:shadow-blue-500/50 hover:scale-[1.02] active:scale-95 group"
+          title="Định vị camera về trung tâm toàn bộ tuyến đường"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px] font-semibold transition-colors cursor-pointer select-none bg-[#F06421] hover:bg-[#FF7635] text-white border border-[#F06421] shadow-md"
         >
-          <LocateFixed size={15} className="text-cyan-200 group-hover:scale-110 transition-transform animate-pulse" />
+          <LocateFixed size={15} className="text-white" />
           <span>Định vị tuyến</span>
         </button>
 
@@ -1046,69 +1062,68 @@ export default function CadMap({
           type="button"
           onClick={toggle3DView}
           title={is3D ? 'Chuyển sang góc nhìn phẳng 2D (Top-down)' : 'Chuyển sang góc nhìn nghiêng 3D (WebGL Pitch)'}
-          className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer select-none border backdrop-blur-md shadow-lg ${
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px] font-semibold transition-colors cursor-pointer select-none border shadow-md ${
             is3D
-              ? 'bg-[#161c2e]/90 border-blue-500/50 text-blue-300 hover:bg-[#1e263d]'
-              : 'bg-[#11141c]/90 border-[#232938] text-slate-300 hover:bg-[#1a202c]'
+              ? 'bg-[#17263C] border-[#22B7C9] text-[#E8EEF6]'
+              : 'bg-[#111D2E] border-[#27384E] text-[#E8EEF6] hover:bg-[#17263C]'
           }`}
         >
-          <Rotate3d size={14} className={is3D ? 'text-blue-400' : 'text-slate-400'} />
-          <span>{is3D ? 'Góc nhìn 3D' : 'Góc nhìn 2D'}</span>
+          <Rotate3d size={15} className={is3D ? 'text-[#22B7C9]' : 'text-[#A9B9CE]'} />
+          <span>{is3D ? 'Chế độ 3D' : 'Chế độ 2D'}</span>
         </button>
       </div>
 
       {/* ── Hint when no data loaded yet ─────────────────────────── */}
       {!cleanGeoJson && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none flex items-center gap-2 px-4 py-2 rounded-full bg-[#11141c]/90 border border-[#232938] backdrop-blur-md text-xs font-medium text-slate-400 shadow-xl">
-          <span>⚡ Bấm "Phân Tích & Dựng Tuyến" để hiển thị dải mặt đường trên bản đồ</span>
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none flex items-center gap-2.5 px-4 py-2 rounded-md bg-[#111D2E] border border-[#27384E] text-[13px] font-medium text-[#A9B9CE] shadow-lg">
+          <span className="w-2 h-2 rounded-full bg-[#F06421]" />
+          <span>Nạp bản vẽ CAD hoặc tọa độ VN-2000 và bấm <strong className="text-[#E8EEF6]">Phân Tích &amp; Dựng Tuyến</strong> để hiển thị hành lang tuyến</span>
         </div>
       )}
 
-      {/* ── MapLibre Popup Dark Glassmorphism Styling ─────────────── */}
+      {/* ── MapLibre Popup Commercial CAD/GIS Styling ─────────────── */}
       <style>{`
         .maplibre-cad-popup .maplibregl-popup-content {
-          background: rgba(10,15,30,0.96) !important;
-          border: 1px solid rgba(6,182,212,0.35) !important;
-          border-radius: 14px !important;
-          box-shadow: 0 20px 50px rgba(0,0,0,0.85) !important;
-          backdrop-filter: blur(20px) !important;
-          padding: 14px 16px !important;
+          background: #111D2E !important;
+          border: 1px solid #27384E !important;
+          border-radius: 8px !important;
+          box-shadow: 0 12px 32px rgba(0,0,0,0.75) !important;
+          padding: 12px 14px !important;
         }
         .maplibre-cad-popup .maplibregl-popup-tip {
-          border-top-color: rgba(10,15,30,0.96) !important;
+          border-top-color: #111D2E !important;
         }
         .maplibre-cad-popup .maplibregl-popup-close-button {
           color: #94a3b8 !important;
-          font-size: 18px !important;
-          top: 8px !important;
-          right: 10px !important;
+          font-size: 16px !important;
+          top: 6px !important;
+          right: 8px !important;
         }
         .maplibre-cad-popup .maplibregl-popup-close-button:hover {
-          color: #22d3ee !important;
+          color: #e8eef6 !important;
         }
         .maplibregl-ctrl-group {
-          background: rgba(15,23,42,0.9) !important;
-          border: 1px solid rgba(51,65,85,0.8) !important;
-          border-radius: 12px !important;
-          backdrop-filter: blur(12px) !important;
-          box-shadow: 0 10px 30px rgba(0,0,0,0.6) !important;
+          background: #111D2E !important;
+          border: 1px solid #27384E !important;
+          border-radius: 6px !important;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
         }
         .maplibregl-ctrl-group button {
-          border-color: rgba(51,65,85,0.6) !important;
+          border-color: #27384E !important;
         }
         .maplibregl-ctrl-group button:hover {
-          background: rgba(6,182,212,0.15) !important;
+          background: #17263C !important;
         }
         .maplibregl-ctrl-group button .maplibregl-ctrl-icon {
           filter: invert(1) hue-rotate(180deg);
         }
         .maplibregl-ctrl-scale {
-          background: rgba(10,15,30,0.85) !important;
-          color: #94a3b8 !important;
-          border-color: rgba(6,182,212,0.4) !important;
+          background: #111D2E !important;
+          color: #e8eef6 !important;
+          border-color: #27384E !important;
           font-family: monospace !important;
-          font-size: 10px !important;
-          backdrop-filter: blur(8px) !important;
+          font-size: 11px !important;
+          padding: 1px 6px !important;
         }
       `}</style>
     </div>
