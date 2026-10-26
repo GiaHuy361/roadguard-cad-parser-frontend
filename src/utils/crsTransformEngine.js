@@ -1072,9 +1072,31 @@ export function parseAndValidateWgs84GeoJson(inputGeoJson, options = {}) {
     name: c.label,
     vertexCount: c.pointCount,
   }))
+
+  // Detect synthetic test benchmark sample (GEO-GJ-20261025-01 / 3-point L-shape)
+  const isSyntheticSample =
+    Boolean(parsed.isSyntheticSample || parsed.properties?.isSyntheticSample) ||
+    enrichedCandidates.some(
+      (c) =>
+        c.roadCode === 'GEO-GJ-20261025-01' ||
+        c.properties?.isSyntheticSample ||
+        String(c.properties?.warning || '').includes('MINH HỌA') ||
+        (c.coordinates &&
+          c.coordinates.length === 3 &&
+          Math.abs(c.coordinates[0][0] - 106.660172) < 1e-4 &&
+          Math.abs(c.coordinates[0][1] - 10.762622) < 1e-4)
+    )
+
   return {
     valid: true,
     success: true,
+    isSyntheticSample,
+    warning: isSyntheticSample
+      ? 'DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA'
+      : null,
+    sampleNotice: isSyntheticSample
+      ? 'DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA (Tuyến 3 điểm chữ L 204.03m phục vụ kiểm thử kỹ thuật)'
+      : null,
     lineCandidates: enrichedCandidates,
     lineStringCandidates: enrichedCandidates,
     polygonFeatures,
@@ -1219,6 +1241,12 @@ export function buildStudioGeoJsonFromWgs84Import(
     })
 
     // 3. Main Centerline
+    const isSynthetic = Boolean(
+      importResult.isSyntheticSample ||
+      chosenLine.roadCode === 'GEO-GJ-20261025-01' ||
+      chosenLine.properties?.isSyntheticSample ||
+      String(chosenLine.properties?.warning || '').includes('MINH HỌA')
+    )
     features.push({
       type: 'Feature',
       properties: {
@@ -1228,6 +1256,13 @@ export function buildStudioGeoJsonFromWgs84Import(
         roadName: chosenLine.roadName || chosenLine.label,
         type: 'Centerline',
         isMainCenterline: true,
+        isSyntheticSample: isSynthetic,
+        warning: isSynthetic
+          ? 'DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA'
+          : null,
+        note: isSynthetic
+          ? 'Tuyến mẫu 3 điểm hình chữ L (204.03m) chỉ phục vụ kiểm thử tính toán CRS, GeoJSON, dựng hình học và xuất JSON. Tọa độ minh họa không bám theo tim đường giao thông thực địa.'
+          : (chosenLine.properties?.note || ''),
         layer: chosenLine.layer || 'TIM_TUYEN',
         totalLength: totalLengthMeters,
         roadWidth: w,
@@ -1277,8 +1312,16 @@ export function buildStudioGeoJsonFromWgs84Import(
         })
       : []
 
+  const isRootSynthetic = Boolean(
+    importResult.isSyntheticSample ||
+    features.some((f) => f.properties?.isSyntheticSample)
+  )
   const fc = {
     type: 'FeatureCollection',
+    isSyntheticSample: isRootSynthetic,
+    warning: isRootSynthetic
+      ? 'DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA'
+      : null,
     bounds,
     bbox,
     sourceDataKind: 'WGS84_IMPORT',

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import * as maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { Layers, Box, Eye, EyeOff, Compass, Maximize2, Rotate3d, Navigation, LocateFixed, Radio, CheckCircle2, Sliders } from 'lucide-react'
+import { Layers, Box, Eye, EyeOff, Compass, Maximize2, Rotate3d, Navigation, LocateFixed, Radio, CheckCircle2, Sliders, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 // Production only: the default worker URL breaks after bundling (see scripts/copy-maplibre-worker.mjs).
@@ -260,6 +260,20 @@ export default function CadMap({
       segmentBoundsMap: boundsMap || {},
     }
   }, [geoJsonData, customCadFeatures, roadParams, completedSegments])
+
+  const isSyntheticSample = useMemo(() => {
+    if (!cleanGeoJson) return false
+    if (cleanGeoJson.isSyntheticSample || cleanGeoJson.properties?.isSyntheticSample) return true
+    if (cleanGeoJson.features) {
+      return cleanGeoJson.features.some(
+        (f) =>
+          f.properties?.isSyntheticSample ||
+          f.properties?.roadCode === 'GEO-GJ-20261025-01' ||
+          String(f.properties?.warning || '').includes('MINH HỌA')
+      )
+    }
+    return false
+  }, [cleanGeoJson])
 
   /* ── 2. Khởi tạo MapLibre GL Map Instance ─────────────────────── */
   useEffect(() => {
@@ -1426,6 +1440,14 @@ export default function CadMap({
           >
             Bay Tới &amp; Hiển Thị Tọa Độ
           </button>
+        </div>
+      )}
+
+      {/* ── Synthetic Test Benchmark Notice Bar ── */}
+      {isSyntheticSample && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-20 pointer-events-none flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#111D2E]/95 border border-[#F59E0B] text-[#F59E0B] text-[12px] font-bold shadow-xl backdrop-blur-md">
+          <AlertTriangle className="w-4 h-4 text-[#F59E0B] flex-shrink-0" />
+          <span>DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA</span>
         </div>
       )}
 

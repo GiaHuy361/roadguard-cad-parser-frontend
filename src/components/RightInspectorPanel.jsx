@@ -120,6 +120,20 @@ export default function RightInspectorPanel({
   const isSurfaceAreaProvisional = Boolean(stats.isSurfaceAreaProvisional)
   const analyzedRoadWidth = Number(stats.analyzedRoadWidth || normalizedParams.roadWidth)
 
+  const isSyntheticSample = useMemo(() => {
+    if (!effectiveGeoJson) return false
+    if (effectiveGeoJson.isSyntheticSample || effectiveGeoJson.properties?.isSyntheticSample) return true
+    if (effectiveGeoJson.features) {
+      return effectiveGeoJson.features.some(
+        (f) =>
+          f.properties?.isSyntheticSample ||
+          f.properties?.roadCode === 'GEO-GJ-20261025-01' ||
+          String(f.properties?.warning || '').includes('MINH HỌA')
+      )
+    }
+    return false
+  }, [effectiveGeoJson])
+
   const activeLayerStats = useMemo(() => {
     const rawList =
       (Array.isArray(cadLayerStats) && cadLayerStats.length > 0 && cadLayerStats) ||
@@ -452,6 +466,19 @@ export default function RightInspectorPanel({
                         <span>Phân Tích Lại Theo B = {normalizedParams.roadWidth}m</span>
                       </button>
                     )}
+                  </div>
+                )}
+
+                {/* Synthetic Benchmark Sample Banner */}
+                {isSyntheticSample && (
+                  <div className="p-3 rounded-lg bg-[#F59E0B]/15 border border-[#F59E0B]/60 text-[#F59E0B] space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold text-[12.5px]">
+                      <AlertTriangle className="w-4 h-4 flex-shrink-0 text-[#F59E0B]" />
+                      <span>DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA</span>
+                    </div>
+                    <div className="text-[11.5px] text-[#CBD5E1] leading-relaxed">
+                      Tuyến mẫu 3 điểm hình chữ L (204.03 m) chỉ phục vụ kiểm thử tính toán CRS, GeoJSON, dựng hình học và xuất JSON. Tọa độ minh họa không bám theo tim đường giao thông thực tế.
+                    </div>
                   </div>
                 )}
 

@@ -136,6 +136,16 @@ export default function RoadGuardDraftExportModal({
     )
   }, [draftBuildResult, sourceCrs])
 
+  const isSyntheticSample = useMemo(() => {
+    return Boolean(
+      chosenFeature?.properties?.isSyntheticSample ||
+      chosenFeature?.properties?.roadCode === 'GEO-GJ-20261025-01' ||
+      String(chosenFeature?.properties?.warning || '').includes('MINH HỌA') ||
+      geoJsonData?.isSyntheticSample ||
+      geoJsonData?.properties?.isSyntheticSample
+    )
+  }, [chosenFeature, geoJsonData])
+
   if (!isOpen) return null
 
   const handleCopyDraft = () => {
@@ -222,6 +232,18 @@ export default function RoadGuardDraftExportModal({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4 select-text">
+          {/* Synthetic Test Benchmark Notice */}
+          {isSyntheticSample && (
+            <div className="p-3 rounded-lg bg-[#F59E0B]/15 border border-[#F59E0B]/60 text-[#F59E0B] space-y-1">
+              <div className="flex items-center gap-1.5 font-bold text-[12.5px]">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0 text-[#F59E0B]" />
+                <span>DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA</span>
+              </div>
+              <div className="text-[11.5px] text-[#CBD5E1] leading-relaxed">
+                Tuyến mẫu 3 điểm hình chữ L (204.03 m) chỉ phục vụ kiểm thử tính toán CRS, GeoJSON, dựng hình học và xuất JSON. Tọa độ minh họa không bám theo tim đường giao thông thực tế.
+              </div>
+            </div>
+          )}
           {allLineStringFeatures.length > 1 && (
             <div className="p-3 rounded-md bg-[#17263C] border border-[#27384E] space-y-1.5">
               <label className="block text-[12px] font-bold text-[#22B7C9] uppercase">

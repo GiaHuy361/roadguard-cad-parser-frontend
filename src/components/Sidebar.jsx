@@ -33,13 +33,17 @@ import {
 const SAMPLE_WGS84_GEOJSON = JSON.stringify(
   {
     type: 'FeatureCollection',
+    isSyntheticSample: true,
+    warning: 'DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA',
     features: [
       {
         type: 'Feature',
         properties: {
           roadCode: 'GEO-GJ-20261025-01',
-          roadName: 'Đường mẫu kiểm thử GeoJSON',
-          note: 'Tuyến mẫu dạng chữ L dùng để kiểm thử import GeoJSON',
+          roadName: 'Đường mẫu kiểm thử GeoJSON (Minh họa)',
+          isSyntheticSample: true,
+          warning: 'DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA',
+          note: 'DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA (Tuyến 3 điểm chữ L 204.03m phục vụ kiểm thử tính toán CRS, GeoJSON, dựng hình học và xuất JSON)',
         },
         geometry: {
           type: 'LineString',
@@ -993,6 +997,17 @@ export default function Sidebar({
                     placeholder='Dán nội dung GeoJSON (FeatureCollection / Feature / LineString chuẩn WGS-84 [lon, lat])...'
                     className="w-full p-2.5 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#39B58A] focus:outline-none text-[12px] font-mono text-[#E8EEF6] resize-y select-text"
                   />
+                  {wgs84ImportInspection?.isSyntheticSample && (
+                    <div className="p-2.5 rounded-md bg-[#F59E0B]/15 border border-[#F59E0B]/60 text-[#F59E0B] text-[11.5px] space-y-1">
+                      <div className="font-bold flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 flex-shrink-0 text-[#F59E0B]" />
+                        <span>DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA</span>
+                      </div>
+                      <p className="text-[11px] text-[#CBD5E1] leading-relaxed">
+                        Tuyến mẫu 3 điểm hình chữ L (204.03 m) chỉ phục vụ kiểm thử tính toán CRS, GeoJSON, dựng hình học và xuất JSON. Tọa độ minh họa không bám theo tim đường giao thông thực tế.
+                      </p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-2">
