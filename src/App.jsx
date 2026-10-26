@@ -7,6 +7,7 @@ import CadViewer from './components/CadViewer'
 import CrossSectionProfile from './components/CrossSectionProfile'
 import RoadGuardDraftExportModal from './components/RoadGuardDraftExportModal'
 import { downloadExcelReport } from './utils/excelExporter'
+import { linkHandler } from './navigation'
 import {
   enrichGeoJsonWithEngineeringFeatures,
   normalizeRoadParams,
@@ -300,9 +301,11 @@ export default function App() {
       {/* ── 1. Top Studio Header (52px, Original Logo + CAD & GIS STUDIO first on left + 4 View Tabs + Essential Tools) ── */}
       <header className="h-[52px] shrink-0 bg-[#111D2E] border-b border-[#27384E] px-3.5 flex items-center justify-between gap-2 lg:gap-3 z-30">
         {/* Left: 100% Original Hoàng Hải Logo + CAD & GIS STUDIO (First element on Header, no button before logo) */}
-        <div
-          className="flex items-center gap-2.5 shrink-0"
-          title="CAD & GIS STUDIO — Công cụ kỹ thuật phân tích bình đồ CAD & bản đồ GIS"
+        <a
+          href="/"
+          onClick={linkHandler('/')}
+          className="flex items-center gap-2.5 shrink-0 rounded focus-visible:outline-2 focus-visible:outline-[#F06421]"
+          title="CAD & GIS STUDIO — Về trang giới thiệu"
         >
           <div className="w-8 h-8 rounded bg-white p-0.5 flex items-center justify-center border border-[#27384E] shrink-0 overflow-hidden">
             <img
@@ -314,7 +317,7 @@ export default function App() {
           <span className="text-[14px] font-bold text-[#E8EEF6] tracking-wider whitespace-nowrap">
             CAD &amp; GIS STUDIO
           </span>
-        </div>
+        </a>
 
         {/* Center: 4 Primary Workspace View Tabs */}
         <nav

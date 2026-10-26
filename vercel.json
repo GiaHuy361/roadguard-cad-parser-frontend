@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/((?!assets/|brand/|landing/|maplibre/|favicon\\.svg|icons\\.svg|sample_road\\.dxf).*)", "destination": "/index.html" }
+  ]
+}
