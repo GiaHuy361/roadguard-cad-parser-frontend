@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/copy-maplibre-worker.mjs",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview"

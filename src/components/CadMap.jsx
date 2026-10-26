@@ -4,6 +4,14 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { Layers, Box, Eye, EyeOff, Compass, Maximize2, Rotate3d, Navigation, LocateFixed, Radio, CheckCircle2, Sliders } from 'lucide-react'
 import toast from 'react-hot-toast'
 
+// Production only: the default worker URL breaks after bundling (see scripts/copy-maplibre-worker.mjs).
+// In dev (`vite`) MapLibre resolves its worker correctly on its own.
+if (import.meta.env.PROD) {
+  maplibregl.setWorkerUrl(
+    new URL(`${import.meta.env.BASE_URL}maplibre/maplibre-gl-worker.mjs`, window.location.origin).href
+  )
+}
+
 /* ── Base Map Style Definitions for MapLibre GL ────────────────── */
 // map.isStyleLoaded() also returns false while raster tiles are still downloading, which made
 // the CAD layers silently skip drawing on slower connections (e.g. the deployed site).
