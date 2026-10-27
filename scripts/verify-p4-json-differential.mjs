@@ -2,9 +2,19 @@
  * verify-p4-json-differential.mjs
  * Differential test between Frontend JS builder and Backend Python builder
  * for RoadGuard GeometryDraft JSON export.
+ *
+ * Enforces strict assertions for:
+ * 1. Vertex count
+ * 2. Vertex order
+ * 3. Coordinate delta < 0.1 mm (< 0.0001 m)
+ * 4. Polyline length delta < 0.01 mm (< 0.00001 m)
+ * 5. Schema and widthProfile integrity
+ * 6. Fault injection (verifies suite strictly FAILS on threshold breach)
  */
 
 import { buildRoadGuardGeometryDraft } from '../src/utils/crsTransformEngine.js'
+import { toLngLat } from '../src/utils/roadEngineeringBuilder.js'
+import fs from 'fs'
 
 const BACKEND_URL = 'http://localhost:5198/api/cad'
 
@@ -19,6 +29,114 @@ async function callBackendDraftExport(payload) {
     throw new Error(`HTTP ${resp.status}: ${text}`)
   }
   return await resp.json()
+}
+
+/**
+ * Strict differential assertion engine
+ */
+function assertDraftDifferential(testName, jsResult, pyResult, options = {}) {
+  const maxCoordTolM = (options.maxCoordMm ?? 0.1) / 1000.0 // 0.1 mm
+  const maxLenTolM = (options.maxLenMm ?? 0.01) / 1000.0    // 0.01 mm
+
+  if (!jsResult || !jsResult.valid) {
+    throw new Error(`[${testName}] JS Builder returned invalid draft: ${JSON.stringify(jsResult?.errors)}`)
+  }
+  if (!pyResult || !pyResult.success) {
+    throw new Error(`[${testName}] Python Builder returned failure: ${pyResult?.error}: ${pyResult?.detail}`)
+  }
+
+  const jsDraft = jsResult.draft
+  const pyDraft = pyResult.draft
+
+  // 1. Schema keys comparison
+  const jsKeys = Object.keys(jsDraft).sort()
+  const pyKeys = Object.keys(pyDraft).sort()
+  if (JSON.stringify(jsKeys) !== JSON.stringify(pyKeys)) {
+    throw new Error(`[${testName}] Schema keys mismatch: JS=[${jsKeys.join(', ')}] vs PY=[${pyKeys.join(', ')}]`)
+  }
+
+  // 2. Fixed fields comparison
+  const fixedFields = [
+    'sourceKind',
+    'sourceCrs',
+    'stationOriginMeters',
+    'changeReason',
+    'sourceFileId',
+    'trackIndex',
+    'trackSegmentIndex',
+    'surveyWidthMeters',
+    'roadCode',
+    'roadName',
+  ]
+  for (const f of fixedFields) {
+    if (jsDraft[f] !== pyDraft[f]) {
+      throw new Error(`[${testName}] Field '${f}' mismatch: JS=${JSON.stringify(jsDraft[f])} vs PY=${JSON.stringify(pyDraft[f])}`)
+    }
+  }
+
+  // 3. Vertex count assertion
+  const jsCoords = jsDraft.coordinates
+  const pyCoords = pyDraft.coordinates
+  if (!Array.isArray(jsCoords) || !Array.isArray(pyCoords)) {
+    throw new Error(`[${testName}] Coordinates field is not an array`)
+  }
+  if (jsCoords.length !== pyCoords.length) {
+    throw new Error(`[${testName}] Vertex count mismatch: JS has ${jsCoords.length} vs PY has ${pyCoords.length}`)
+  }
+  if (options.expectedVertexCount && jsCoords.length !== options.expectedVertexCount) {
+    throw new Error(`[${testName}] Expected vertex count ${options.expectedVertexCount}, got ${jsCoords.length}`)
+  }
+  if (jsCoords.length < 2) {
+    throw new Error(`[${testName}] Degenerate coordinates: length ${jsCoords.length} < 2`)
+  }
+
+  // 4. Vertex order and coordinate delta assertion (< 0.1 mm)
+  let maxCoordDiff = 0
+  for (let i = 0; i < jsCoords.length; i++) {
+    const ptJs = jsCoords[i]
+    const ptPy = pyCoords[i]
+    const dx = Math.abs(ptJs.x - ptPy.x)
+    const dy = Math.abs(ptJs.y - ptPy.y)
+    const delta = Math.max(dx, dy)
+    if (delta > maxCoordDiff) maxCoordDiff = delta
+
+    if (dx > maxCoordTolM || dy > maxCoordTolM) {
+      throw new Error(
+        `[${testName}] Vertex [${i}] coordinate delta ${(delta * 1000).toFixed(4)}mm exceeds tolerance ${(maxCoordTolM * 1000)}mm! JS=(${ptJs.x}, ${ptJs.y}) vs PY=(${ptPy.x}, ${ptPy.y})`
+      )
+    }
+  }
+
+  // 5. WidthProfile structure assertion
+  const jsWp = jsDraft.widthProfile
+  const pyWp = pyDraft.widthProfile
+  if (!Array.isArray(jsWp) || !Array.isArray(pyWp) || jsWp.length === 0 || pyWp.length === 0) {
+    throw new Error(`[${testName}] widthProfile missing or empty`)
+  }
+  if (jsWp[0].fromOffsetMeters !== 0 || pyWp[0].fromOffsetMeters !== 0) {
+    throw new Error(`[${testName}] widthProfile fromOffsetMeters is not 0`)
+  }
+  if (jsWp[0].widthMeters !== pyWp[0].widthMeters) {
+    throw new Error(`[${testName}] widthProfile widthMeters mismatch: JS=${jsWp[0].widthMeters} vs PY=${pyWp[0].widthMeters}`)
+  }
+
+  // 6. Length delta assertion (< 0.01 mm)
+  const jsLen = jsWp[0].toOffsetMeters
+  const pyLen = pyWp[0].toOffsetMeters
+  const lenDiff = Math.abs(jsLen - pyLen)
+  if (lenDiff > maxLenTolM) {
+    throw new Error(
+      `[${testName}] Polyline length delta ${(lenDiff * 1000).toFixed(6)}mm exceeds tolerance ${(maxLenTolM * 1000)}mm! JS=${jsLen}m vs PY=${pyLen}m`
+    )
+  }
+
+  return {
+    vertexCount: jsCoords.length,
+    maxCoordDiffMm: maxCoordDiff * 1000,
+    lenDiffMm: lenDiff * 1000,
+    jsLength: jsLen,
+    pyLength: pyLen,
+  }
 }
 
 // Generate test WGS84 centerlines
@@ -88,118 +206,47 @@ async function runDifferentialTests() {
 
   for (const tc of TEST_CASES) {
     console.log(`[TEST CASE] ${tc.name}`)
-    
-    // 1. Run Frontend JS Builder
-    const jsResult = buildRoadGuardGeometryDraft({
-      centerlineWgs84: tc.centerlineWgs84,
-      sourceCrs: tc.sourceCrs,
-      stationOriginMeters: tc.stationOriginMeters,
-      changeReason: tc.changeReason,
-      roadCode: tc.roadCode,
-      roadName: tc.roadName,
-      roadWidth: tc.roadWidth,
-      surveyWidthMeters: tc.surveyWidthMeters,
-    })
+    try {
+      const jsResult = buildRoadGuardGeometryDraft({
+        centerlineWgs84: tc.centerlineWgs84,
+        sourceCrs: tc.sourceCrs,
+        stationOriginMeters: tc.stationOriginMeters,
+        changeReason: tc.changeReason,
+        roadCode: tc.roadCode,
+        roadName: tc.roadName,
+        roadWidth: tc.roadWidth,
+        surveyWidthMeters: tc.surveyWidthMeters,
+      })
 
-    if (!jsResult.valid) {
-      console.error(`  FAIL: JS Builder returned invalid:`, jsResult.errors)
-      totalFail++
-      continue
-    }
+      const pyResult = await callBackendDraftExport({
+        centerlineWgs84: tc.centerlineWgs84,
+        sourceCrs: tc.sourceCrs,
+        stationOriginMeters: tc.stationOriginMeters,
+        changeReason: tc.changeReason,
+        roadCode: tc.roadCode,
+        roadName: tc.roadName,
+        roadWidth: tc.roadWidth,
+        surveyWidthMeters: tc.surveyWidthMeters,
+      })
 
-    // 2. Run Backend Python Builder via HTTP
-    const pyResult = await callBackendDraftExport({
-      centerlineWgs84: tc.centerlineWgs84,
-      sourceCrs: tc.sourceCrs,
-      stationOriginMeters: tc.stationOriginMeters,
-      changeReason: tc.changeReason,
-      roadCode: tc.roadCode,
-      roadName: tc.roadName,
-      roadWidth: tc.roadWidth,
-      surveyWidthMeters: tc.surveyWidthMeters,
-    })
-
-    if (!pyResult.success) {
-      console.error(`  FAIL: Python Builder failed:`, pyResult.error, pyResult.detail)
-      totalFail++
-      continue
-    }
-
-    const jsDraft = jsResult.draft
-    const pyDraft = pyResult.draft
-
-    // 3. Compare Schema Keys
-    const jsKeys = Object.keys(jsDraft).sort()
-    const pyKeys = Object.keys(pyDraft).sort()
-    const keysMatch = JSON.stringify(jsKeys) === JSON.stringify(pyKeys)
-    if (!keysMatch) {
-      console.error(`  FAIL: Schema keys mismatch! JS: ${jsKeys.join(', ')} vs PY: ${pyKeys.join(', ')}`)
-      totalFail++
-      continue
-    }
-
-    // 4. Compare Fixed Fields
-    let fieldsPass = true
-    const fixedFields = ['sourceKind', 'sourceCrs', 'stationOriginMeters', 'changeReason', 'sourceFileId', 'trackIndex', 'trackSegmentIndex', 'surveyWidthMeters', 'roadCode', 'roadName']
-    for (const f of fixedFields) {
-      if (jsDraft[f] !== pyDraft[f]) {
-        console.error(`  FAIL: Field '${f}' mismatch: JS=${JSON.stringify(jsDraft[f])} vs PY=${JSON.stringify(pyDraft[f])}`)
-        fieldsPass = false
-      }
-    }
-
-    // 5. Compare Coordinates
-    const jsCoords = jsDraft.coordinates
-    const pyCoords = pyDraft.coordinates
-    if (jsCoords.length !== pyCoords.length) {
-      console.error(`  FAIL: Coordinates length mismatch: JS=${jsCoords.length} vs PY=${pyCoords.length}`)
-      fieldsPass = false
-    }
-
-    let maxCoordDiff = 0
-    for (let i = 0; i < Math.min(jsCoords.length, pyCoords.length); i++) {
-      const dx = Math.abs(jsCoords[i].x - pyCoords[i].x)
-      const dy = Math.abs(jsCoords[i].y - pyCoords[i].y)
-      const diff = Math.max(dx, dy)
-      if (diff > maxCoordDiff) maxCoordDiff = diff
-    }
-
-    // Tolerance: coordinates must match within < 0.0001m (< 0.1mm)
-    const coordPass = maxCoordDiff < 0.0001
-    if (!coordPass) {
-      console.error(`  FAIL: Coordinates max diff ${maxCoordDiff}m exceeds 0.0001m`)
-      fieldsPass = false
-    }
-
-    // 6. Compare Length (toOffsetMeters in widthProfile)
-    const jsLen = jsDraft.widthProfile[0].toOffsetMeters
-    const pyLen = pyDraft.widthProfile[0].toOffsetMeters
-    const lenDiff = Math.abs(jsLen - pyLen)
-    const lenPass = lenDiff < 0.00001 // < 0.01 mm
-
-    if (!lenPass) {
-      console.error(`  FAIL: Length mismatch: JS=${jsLen}m vs PY=${pyLen}m (diff=${lenDiff}m)`)
-      fieldsPass = false
-    }
-
-    if (fieldsPass && coordPass && lenPass) {
-      console.log(`  PASS: Schema keys match: ${jsKeys.length} fields`)
-      console.log(`        Point count: JS=${jsCoords.length}, PY=${pyCoords.length}`)
-      console.log(`        Max coordinate delta: ${(maxCoordDiff * 1000).toFixed(4)} mm (tolerance < 0.1 mm)`)
-      console.log(`        Length delta: ${(lenDiff * 1000).toFixed(6)} mm (JS=${jsLen.toFixed(4)}m, PY=${pyLen.toFixed(4)}m)`)
+      const metrics = assertDraftDifferential(tc.name, jsResult, pyResult, { maxCoordMm: 0.1, maxLenMm: 0.01 })
+      console.log(`  PASS: Schema, Coordinates & Length strictly validated:`)
+      console.log(`        Vertices: ${metrics.vertexCount}`)
+      console.log(`        Max coord delta: ${metrics.maxCoordDiffMm.toFixed(4)} mm (< 0.1 mm)`)
+      console.log(`        Length delta: ${metrics.lenDiffMm.toFixed(6)} mm (< 0.01 mm)`)
       totalPass++
-    } else {
+    } catch (err) {
+      console.error(`  FAIL: ${err.message}`)
       totalFail++
     }
     console.log('')
   }
 
-  // Also test with actual real DXF centerline from 3. BDTK.dxf
-  console.log('[TEST CASE] Real DXF Centerline from 3. BDTK.dxf via /parse-road')
+  // Real DXF 1: 3. BDTK.dxf
+  console.log('[TEST CASE] Real DXF Centerline from 3. BDTK.dxf (149 vertices)')
+  let jsBdtk = null
+  let pyBdtk = null
   try {
-    const fs = await import('fs')
-    const path = await import('path')
-    const { toLngLat } = await import('../src/utils/roadEngineeringBuilder.js')
     const dxfBuffer = fs.readFileSync('d:/DO_AN/roadguard-cad-parser/3. BDTK.dxf')
     const blob = new Blob([dxfBuffer])
     const formData = new FormData()
@@ -215,9 +262,8 @@ async function runDifferentialTests() {
     const parseData = await parseResp.json()
     const rawCenterline = parseData.centerline || []
     const centerlineWgs84 = rawCenterline.map(toLngLat)
-    console.log(`  Retrieved ${centerlineWgs84.length} WGS-84 vertices from 3. BDTK.dxf`)
 
-    const jsReal = buildRoadGuardGeometryDraft({
+    jsBdtk = buildRoadGuardGeometryDraft({
       centerlineWgs84,
       sourceCrs: 32648,
       stationOriginMeters: 0,
@@ -228,7 +274,7 @@ async function runDifferentialTests() {
       surveyWidthMeters: 14.0,
     })
 
-    const pyReal = await callBackendDraftExport({
+    pyBdtk = await callBackendDraftExport({
       centerlineWgs84,
       sourceCrs: 32648,
       stationOriginMeters: 0,
@@ -239,33 +285,25 @@ async function runDifferentialTests() {
       surveyWidthMeters: 14.0,
     })
 
-    const jsDraft = jsReal.draft
-    const pyDraft = pyReal.draft
-
-    let realDiff = 0
-    for (let i = 0; i < jsDraft.coordinates.length; i++) {
-      const dx = Math.abs(jsDraft.coordinates[i].x - pyDraft.coordinates[i].x)
-      const dy = Math.abs(jsDraft.coordinates[i].y - pyDraft.coordinates[i].y)
-      const d = Math.max(dx, dy)
-      if (d > realDiff) realDiff = d
-    }
-
-    const realLenDiff = Math.abs(jsDraft.widthProfile[0].toOffsetMeters - pyDraft.widthProfile[0].toOffsetMeters)
-    console.log(`  PASS: Real DXF Differential check:`)
-    console.log(`        Vertices: ${jsDraft.coordinates.length}`)
-    console.log(`        Max coordinate delta: ${(realDiff * 1000).toFixed(4)} mm`)
-    console.log(`        Length delta: ${(realLenDiff * 1000).toFixed(6)} mm (JS=${jsDraft.widthProfile[0].toOffsetMeters.toFixed(4)}m, PY=${pyDraft.widthProfile[0].toOffsetMeters.toFixed(4)}m)`)
+    const metrics = assertDraftDifferential('3. BDTK.dxf', jsBdtk, pyBdtk, {
+      maxCoordMm: 0.1,
+      maxLenMm: 0.01,
+      expectedVertexCount: 149,
+    })
+    console.log(`  PASS: 3. BDTK.dxf strictly validated:`)
+    console.log(`        Vertices: ${metrics.vertexCount} (exact match: 149)`)
+    console.log(`        Max coord delta: ${metrics.maxCoordDiffMm.toFixed(4)} mm (< 0.1 mm)`)
+    console.log(`        Length delta: ${metrics.lenDiffMm.toFixed(6)} mm (< 0.01 mm)`)
+    console.log(`        Polyline length: JS=${metrics.jsLength.toFixed(4)}m, PY=${metrics.pyLength.toFixed(4)}m`)
     totalPass++
   } catch (err) {
-    console.error(`  FAIL in real DXF test:`, err.message)
+    console.error(`  FAIL in 3. BDTK.dxf test:`, err.message)
     totalFail++
   }
 
-  // Also test with Dong Nai DXF (binh do dieu chinh lan 1.dxf)
-  console.log('\n[TEST CASE] Real DXF Dong Nai (binh do dieu chinh lan 1.dxf - YEUTOCONGTUYEN 700.73m)')
+  // Real DXF 2: Dong Nai DXF (binh do dieu chinh lan 1.dxf)
+  console.log('\n[TEST CASE] Real DXF Dong Nai (binh do dieu chinh lan 1.dxf - YEUTOCONGTUYEN 119 vertices)')
   try {
-    const fs = await import('fs')
-    const { toLngLat } = await import('../src/utils/roadEngineeringBuilder.js')
     const dxfBuffer = fs.readFileSync('C:/Users/dell/Downloads/binh do dieu chinh lan 1.dxf')
     const blob = new Blob([dxfBuffer])
     const formData = new FormData()
@@ -282,7 +320,6 @@ async function runDifferentialTests() {
     const parseData = await parseResp.json()
     const rawCenterline = parseData.centerline || []
     const centerlineWgs84 = rawCenterline.map(toLngLat)
-    console.log(`  Retrieved ${centerlineWgs84.length} WGS-84 vertices (parsed length: ${parseData.totalLengthMeters}m)`)
 
     const jsReal = buildRoadGuardGeometryDraft({
       centerlineWgs84,
@@ -306,25 +343,74 @@ async function runDifferentialTests() {
       surveyWidthMeters: 14.0,
     })
 
-    const jsDraft = jsReal.draft
-    const pyDraft = pyReal.draft
-
-    let realDiff = 0
-    for (let i = 0; i < jsDraft.coordinates.length; i++) {
-      const dx = Math.abs(jsDraft.coordinates[i].x - pyDraft.coordinates[i].x)
-      const dy = Math.abs(jsDraft.coordinates[i].y - pyDraft.coordinates[i].y)
-      const d = Math.max(dx, dy)
-      if (d > realDiff) realDiff = d
-    }
-
-    const realLenDiff = Math.abs(jsDraft.widthProfile[0].toOffsetMeters - pyDraft.widthProfile[0].toOffsetMeters)
-    console.log(`  PASS: Real Dong Nai DXF Differential check:`)
-    console.log(`        Vertices: ${jsDraft.coordinates.length}`)
-    console.log(`        Max coordinate delta: ${(realDiff * 1000).toFixed(4)} mm`)
-    console.log(`        Length delta: ${(realLenDiff * 1000).toFixed(6)} mm (JS=${jsDraft.widthProfile[0].toOffsetMeters.toFixed(4)}m, PY=${pyDraft.widthProfile[0].toOffsetMeters.toFixed(4)}m)`)
+    const metrics = assertDraftDifferential('Dong Nai DXF', jsReal, pyReal, {
+      maxCoordMm: 0.1,
+      maxLenMm: 0.01,
+      expectedVertexCount: 119,
+    })
+    console.log(`  PASS: Dong Nai DXF strictly validated:`)
+    console.log(`        Vertices: ${metrics.vertexCount} (exact match: 119)`)
+    console.log(`        Max coord delta: ${metrics.maxCoordDiffMm.toFixed(4)} mm (< 0.1 mm)`)
+    console.log(`        Length delta: ${metrics.lenDiffMm.toFixed(6)} mm (< 0.01 mm)`)
+    console.log(`        Polyline length: JS=${metrics.jsLength.toFixed(4)}m, PY=${metrics.pyLength.toFixed(4)}m`)
     totalPass++
   } catch (err) {
-    console.error(`  FAIL in real Dong Nai DXF test:`, err.message)
+    console.error(`  FAIL in Dong Nai DXF test:`, err.message)
+    totalFail++
+  }
+
+  // Fault Injection Check: Proof that assertions fail when coordinates exceed 0.1mm tolerance
+  console.log('\n[TEST CASE] Fault Injection Verification: Proving test fails when coordinate delta > 0.1mm')
+  try {
+    if (!jsBdtk || !pyBdtk) {
+      throw new Error('Baseline BDTK test results not available for mutation check')
+    }
+    const mutatedPy = JSON.parse(JSON.stringify(pyBdtk))
+    // Artificially inject a 0.5mm (0.0005m) discrepancy on vertex 0
+    mutatedPy.draft.coordinates[0].x += 0.0005
+
+    let caught = false
+    try {
+      assertDraftDifferential('MUTATED_COORDS', jsBdtk, mutatedPy, { maxCoordMm: 0.1, maxLenMm: 0.01 })
+    } catch (assertionErr) {
+      caught = true
+      console.log(`  PASS: Assertion triggered as expected: ${assertionErr.message}`)
+    }
+
+    if (!caught) {
+      console.error('  FAIL: Test suite did NOT fail on 0.5mm coordinate mutation!')
+      totalFail++
+    } else {
+      totalPass++
+    }
+  } catch (err) {
+    console.error('  FAIL in fault injection test:', err.message)
+    totalFail++
+  }
+
+  // Fault Injection Check 2: Proof that assertions fail when polyline length delta > 0.01mm
+  console.log('\n[TEST CASE] Fault Injection Verification: Proving test fails when length delta > 0.01mm')
+  try {
+    const mutatedPyLen = JSON.parse(JSON.stringify(pyBdtk))
+    // Artificially inject a 0.05mm (0.00005m) length difference
+    mutatedPyLen.draft.widthProfile[0].toOffsetMeters += 0.00005
+
+    let caughtLen = false
+    try {
+      assertDraftDifferential('MUTATED_LENGTH', jsBdtk, mutatedPyLen, { maxCoordMm: 0.1, maxLenMm: 0.01 })
+    } catch (assertionErr) {
+      caughtLen = true
+      console.log(`  PASS: Assertion triggered as expected: ${assertionErr.message}`)
+    }
+
+    if (!caughtLen) {
+      console.error('  FAIL: Test suite did NOT fail on 0.05mm length mutation!')
+      totalFail++
+    } else {
+      totalPass++
+    }
+  } catch (err) {
+    console.error('  FAIL in length fault injection test:', err.message)
     totalFail++
   }
 

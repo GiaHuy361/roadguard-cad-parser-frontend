@@ -161,7 +161,33 @@ export default function Sidebar({
     }
   }, [isCrsStale, onCrsStaleChange])
 
+  const abortActiveRequest = useCallback(() => {
+    activeRequestIdRef.current++
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+  }, [])
+
+  const handleSwitchInputMode = useCallback(
+    (mode) => {
+      if (mode === inputMode) return
+      abortActiveRequest()
+      setLoading(false)
+      setInputMode(mode)
+    },
+    [inputMode, abortActiveRequest]
+  )
+
+  const handleCrsParamChange = useCallback(() => {
+    if (loading) {
+      abortActiveRequest()
+      setLoading(false)
+    }
+  }, [loading, abortActiveRequest])
+
   const handlePresetChange = (presetId) => {
+    handleCrsParamChange()
     setSelectedPresetId(presetId)
     if (presetId === 'unconfigured') {
       setSelectedCm('')
@@ -187,6 +213,8 @@ export default function Sidebar({
   }
 
   const handleRemoveFile = () => {
+    abortActiveRequest()
+    setLoading(false)
     setFile(null)
     setVisibleLayers({})
     setLayerGeometries({})
@@ -535,6 +563,9 @@ export default function Sidebar({
           { id: tid }
         )
       } catch (err) {
+        if (currentReqId !== activeRequestIdRef.current || axios.isCancel?.(err) || err?.name === 'CanceledError') {
+          return
+        }
         const errData = err?.response?.data
         if (
           errData?.error === 'AmbiguousAxisOrder' ||
@@ -550,7 +581,9 @@ export default function Sidebar({
           toast.error(`Lỗi: ${msg}`, { id: tid })
         }
       } finally {
-        setLoading(false)
+        if (currentReqId === activeRequestIdRef.current) {
+          setLoading(false)
+        }
       }
     },
     [
@@ -936,7 +969,7 @@ export default function Sidebar({
           <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-[#0B1220] border border-[#27384E]">
             <button
               type="button"
-              onClick={() => setInputMode('cad')}
+              onClick={() => handleSwitchInputMode('cad')}
               title="Nhập bản vẽ kỹ thuật AutoCAD (.DXF, .DWG)"
               className={`w-full min-w-0 py-2 px-1 rounded-md text-[11.5px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 inputMode === 'cad'
@@ -949,7 +982,7 @@ export default function Sidebar({
             </button>
             <button
               type="button"
-              onClick={() => setInputMode('coords')}
+              onClick={() => handleSwitchInputMode('coords')}
               title="Nhập danh sách tọa độ phẳng VN-2000 (X Bắc, Y Đông)"
               className={`w-full min-w-0 py-2 px-1 rounded-md text-[11.5px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 inputMode === 'coords'
@@ -962,7 +995,7 @@ export default function Sidebar({
             </button>
             <button
               type="button"
-              onClick={() => setInputMode('wgs84')}
+              onClick={() => handleSwitchInputMode('wgs84')}
               title="Nhập GeoJSON RFC 7946 hoặc bảng tọa độ WGS-84 (Longitude, Latitude)"
               className={`w-full min-w-0 py-2 px-1 rounded-md text-[11.5px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 inputMode === 'wgs84'
@@ -1330,6 +1363,7 @@ export default function Sidebar({
                 max="112"
                 value={selectedCm}
                 onChange={(e) => {
+                  handleCrsParamChange()
                   setSelectedCm(e.target.value)
                   setSelectedPresetId('custom')
                 }}
@@ -1344,6 +1378,7 @@ export default function Sidebar({
               <select
                 value={scaleFactor}
                 onChange={(e) => {
+                  handleCrsParamChange()
                   setScaleFactor(e.target.value)
                   setSelectedPresetId('custom')
                 }}
@@ -1363,6 +1398,7 @@ export default function Sidebar({
             <select
               value={axisOrder}
               onChange={(e) => {
+                handleCrsParamChange()
                 setAxisOrder(e.target.value)
                 setAxisAmbiguityAlert(null)
               }}
