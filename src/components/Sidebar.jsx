@@ -18,6 +18,8 @@ import {
   AlertTriangle,
   RefreshCw,
 } from 'lucide-react'
+import CrsPresetSelect from './CrsPresetSelect'
+import CandidateLayerSelect from './CandidateLayerSelect'
 import {
   VN2000_REFERENCE_PRESETS,
   convertRoadResponseToGeoJson,
@@ -257,7 +259,12 @@ export default function Sidebar({
         toast.error('Kinh tuyến trục L₀ không hợp lệ (phải từ 100° đến 112°).')
         return
       }
-      const k0Val = parseFloat(scaleFactor) || 0.9999
+      const k0Num = parseFloat(scaleFactor)
+      if (!Number.isFinite(k0Num) || k0Num <= 0.9 || k0Num > 1.1) {
+        toast.error('Hệ số co giãn múi chiếu k₀ không hợp lệ (cần nằm trong khoảng 0.9000 đến 1.1000).')
+        return
+      }
+      const k0Val = k0Num
 
       setLoading(true)
       const tid = toast.loading(
@@ -435,7 +442,12 @@ export default function Sidebar({
         toast.error('Kinh tuyến trục L₀ không hợp lệ (phải từ 100° đến 112°).')
         return
       }
-      const k0Val = parseFloat(scaleFactor) || 0.9999
+      const k0Num = parseFloat(scaleFactor)
+      if (!Number.isFinite(k0Num) || k0Num <= 0.9 || k0Num > 1.1) {
+        toast.error('Hệ số co giãn múi chiếu k₀ không hợp lệ (cần nằm trong khoảng 0.9000 đến 1.1000).')
+        return
+      }
+      const k0Val = k0Num
 
       setLoading(true)
       const tid = toast.loading('Đang dựng tuyến từ tọa độ VN-2000…')
@@ -573,7 +585,7 @@ export default function Sidebar({
       const crsConfig = crsConfigured
         ? {
             centralMeridian: parseFloat(selectedCm),
-            scaleFactor: parseFloat(scaleFactor) || 0.9999,
+            scaleFactor: parseFloat(scaleFactor),
             axisOrder,
           }
         : null
@@ -875,12 +887,12 @@ export default function Sidebar({
           </div>
 
           {/* Input Mode Segmented Switcher (CAD / VN-2000 / WGS-84 GeoJSON) */}
-          <div className="flex items-center gap-1 p-1 rounded-lg bg-[#0B1220] border border-[#27384E]">
+          <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-[#0B1220] border border-[#27384E]">
             <button
               type="button"
               onClick={() => setInputMode('cad')}
               title="Nhập bản vẽ kỹ thuật AutoCAD (.DXF, .DWG)"
-              className={`flex-1 min-w-0 py-1.5 px-2 rounded-md text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              className={`w-full min-w-0 py-2 px-1 rounded-md text-[11.5px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 inputMode === 'cad'
                   ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
                   : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
@@ -893,7 +905,7 @@ export default function Sidebar({
               type="button"
               onClick={() => setInputMode('coords')}
               title="Nhập danh sách tọa độ phẳng VN-2000 (X Bắc, Y Đông)"
-              className={`flex-1 min-w-0 py-1.5 px-2 rounded-md text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              className={`w-full min-w-0 py-2 px-1 rounded-md text-[11.5px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 inputMode === 'coords'
                   ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
                   : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
@@ -906,7 +918,7 @@ export default function Sidebar({
               type="button"
               onClick={() => setInputMode('wgs84')}
               title="Nhập GeoJSON RFC 7946 hoặc bảng tọa độ WGS-84 (Longitude, Latitude)"
-              className={`flex-1 min-w-0 py-1.5 px-2 rounded-md text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              className={`w-full min-w-0 py-2 px-1 rounded-md text-[11.5px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 inputMode === 'wgs84'
                   ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
                   : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
@@ -971,52 +983,18 @@ export default function Sidebar({
                 </div>
               )}
 
-              {/* Candidate Centerline Layer Selector */}
+              {/* Candidate Centerline Layer Selector Popover */}
               {candidateLayers.length > 0 && (
-                <div className="mt-2 space-y-1.5 p-2.5 rounded-lg border border-[#27384E] bg-[#0E1726]">
-                  <div className="flex items-center justify-between text-[12px]">
-                    <span className="font-semibold text-[#E8EEF6]">Layer tim tuyến đề xuất:</span>
-                    <span className="text-[11px] font-mono text-[#22B7C9] bg-[#22B7C9]/15 px-1.5 py-0.5 rounded">
-                      {candidateLayers.length} lớp
-                    </span>
-                  </div>
-                  <select
-                    value={
-                      activeCenterlineLayer ||
-                      candidateLayers.find((c) => c.isRecommended)?.name ||
-                      candidateLayers[0]?.name
-                    }
-                    onChange={(e) => {
-                      const lyr = e.target.value
+                <div className="mt-2.5">
+                  <CandidateLayerSelect
+                    candidateLayers={candidateLayers}
+                    activeCenterlineLayer={activeCenterlineLayer}
+                    onSelectLayer={(lyr) => {
                       setActiveCenterlineLayer(lyr)
                       handleSubmit(lyr)
                     }}
-                    className="w-full px-2.5 py-2 rounded-md bg-[#0B1220] border border-[#27384E] text-[12px] text-[#E8EEF6] focus:outline-none focus:border-[#22B7C9] cursor-pointer truncate"
-                  >
-                    {candidateLayers.map((c) => (
-                      <option key={c.name} value={c.name}>
-                        {c.name} ({c.totalLengthMeters}m • {c.entityCount} đối tượng){c.isRecommended ? ' ⭐ [Đề xuất]' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {activeCenterlineLayer && (
-                <div className="mt-2 px-3 py-2 rounded-md bg-[#17263C] border border-[#27384E] flex items-center justify-between text-[12.5px]">
-                  <span className="text-[#E8EEF6]">
-                    Layer tim:{' '}
-                    <strong className="font-mono text-[#F06421]">
-                      {activeCenterlineLayer}
-                    </strong>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleSetCenterlineLayer(null)}
-                    className="text-[12px] text-[#A9B9CE] hover:text-[#E8EEF6] underline cursor-pointer"
-                  >
-                    Tự động
-                  </button>
+                    disabled={loading}
+                  />
                 </div>
               )}
             </div>
@@ -1282,23 +1260,13 @@ export default function Sidebar({
                 </span>
               </div>
             )}
-            <select
-              value={selectedPresetId}
-              onChange={(e) => handlePresetChange(e.target.value)}
-              className="w-full max-w-full truncate px-3 py-2 rounded-md bg-[#0B1220] border border-[#27384E] text-[12.5px] text-[#E8EEF6] focus:outline-none focus:border-[#22B7C9] cursor-pointer"
-            >
-              {VN2000_REFERENCE_PRESETS.map((p) => (
-                <option key={p.id} value={p.id} className="bg-[#111D2E] text-[#E8EEF6]">
-                  {p.label}
-                </option>
-              ))}
-              <option value="custom" className="bg-[#111D2E] text-[#F06421]">
-                -- Tùy chỉnh kinh tuyến trục L₀ &amp; múi chiếu --
-              </option>
-              <option value="unconfigured" className="bg-[#111D2E] text-[#F59E0B]">
-                -- Chưa cấu hình VN-2000 (Chỉ dùng WGS-84) --
-              </option>
-            </select>
+            <CrsPresetSelect
+              selectedPresetId={selectedPresetId}
+              selectedCm={selectedCm}
+              scaleFactor={scaleFactor}
+              onSelectPreset={handlePresetChange}
+              disabled={loading}
+            />
             <p className="text-[12px] text-[#8FA3BA] leading-snug">
               Hỗ trợ hồ sơ kỹ thuật lịch sử hoặc nhập trực tiếp L₀, k₀ bên dưới.
             </p>

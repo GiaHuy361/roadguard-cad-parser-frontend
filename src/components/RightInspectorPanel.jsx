@@ -124,13 +124,14 @@ export default function RightInspectorPanel({
   const isSurfaceAreaProvisional = Boolean(stats.isSurfaceAreaProvisional)
   const analyzedRoadWidth = Number(stats.analyzedRoadWidth || normalizedParams.roadWidth)
 
-  const isExportBlocked =
-    isSurfaceAreaProvisional ||
-    isCrsStale ||
-    crsLifecycleState === 'UNCONFIGURED' ||
-    crsLifecycleState === 'INVALID_CONFIG'
-
-  const getExportBlockedReason = () => {
+  const getExportBlockedReason = (targetFormat = 'all') => {
+    if (isSurfaceAreaProvisional) {
+      return `Bề rộng mặt đường đã đổi từ ${analyzedRoadWidth}m sang ${normalizedParams.roadWidth}m. Hãy bấm Cập Nhật & Dựng Lại Mặt Đường trước khi xuất dữ liệu chính thức.`
+    }
+    // If source data is native WGS-84, GeoJSON export does not require VN-2000 CRS
+    if (isWgs84Source && targetFormat === 'geojson') {
+      return null
+    }
     if (crsLifecycleState === 'UNCONFIGURED') {
       return 'Hệ quy chiếu VN-2000 chưa được cấu hình. Vui lòng chọn L₀ trước khi xuất dữ liệu.'
     }
@@ -140,11 +141,12 @@ export default function RightInspectorPanel({
     if (isCrsStale) {
       return 'Cấu hình CRS đã thay đổi (STALE). Hãy bấm Phân Tích Lại trước khi xuất.'
     }
-    if (isSurfaceAreaProvisional) {
-      return `Bề rộng mặt đường đã đổi từ ${analyzedRoadWidth}m sang ${normalizedParams.roadWidth}m. Hãy bấm Cập Nhật & Dựng Lại Mặt Đường trước khi xuất dữ liệu.`
-    }
     return null
   }
+
+  const isGeoJsonExportBlocked = Boolean(getExportBlockedReason('geojson'))
+  const isExcelExportBlocked = Boolean(getExportBlockedReason('excel'))
+  const isExportBlocked = isExcelExportBlocked
 
   const isSyntheticSample = useMemo(() => {
     if (!effectiveGeoJson) return false
@@ -215,11 +217,9 @@ export default function RightInspectorPanel({
       toast.error('Chưa có dữ liệu GeoJSON để tải xuống.')
       return
     }
-    if (isSurfaceAreaProvisional) {
-      toast.error(
-        `Bề rộng mặt đường đã đổi từ ${analyzedRoadWidth}m sang ${normalizedParams.roadWidth}m. Vui lòng bấm "Cập Nhật & Dựng Lại Mặt Đường" trước khi xuất dữ liệu chính thức.`,
-        { duration: 5000 }
-      )
+    const blockedReason = getExportBlockedReason('geojson')
+    if (blockedReason) {
+      toast.error(blockedReason, { duration: 5000 })
       return
     }
     try {
@@ -254,6 +254,11 @@ export default function RightInspectorPanel({
   }
 
   const handleExportExcel = () => {
+    const blockedReason = getExportBlockedReason('excel')
+    if (blockedReason) {
+      toast.error(blockedReason, { duration: 5000 })
+      return
+    }
     downloadExcelReport({
       geoJsonData: effectiveGeoJson,
       analyticsData: stats,
@@ -384,13 +389,13 @@ export default function RightInspectorPanel({
         )}
       </div>
 
-      {/* ── Sub-navigation Tabs ── */}
-      <div className="bg-[#0B1220]/60 border-b border-[#27384E] p-1 flex items-center gap-1 shrink-0">
+      {/* ── Sub-navigation Tabs (Equal 4-column responsive grid) ── */}
+      <div className="bg-[#0B1220]/80 border-b border-[#27384E] p-1 grid grid-cols-4 gap-1 shrink-0">
         <button
           type="button"
           onClick={() => setActiveSubTab('metrics')}
           title="Khối lượng & số liệu thiết kế kỹ thuật mặt đường"
-          className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-2 px-1 rounded-md text-[12px] font-semibold transition-all cursor-pointer ${
+          className={`min-w-0 flex items-center justify-center gap-1 py-2 px-0.5 sm:px-1 rounded-md text-[11.5px] font-semibold transition-all cursor-pointer ${
             activeSubTab === 'metrics'
               ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
               : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
@@ -398,7 +403,7 @@ export default function RightInspectorPanel({
         >
           <span className="truncate">Khối lượng</span>
           {isSurfaceAreaProvisional && (
-            <span className="w-2 h-2 rounded-full bg-[#F59E0B] shrink-0" title="Cần phân tích lại mặt đường" />
+            <span className="w-1.5 h-1.5 rounded-full bg-[#F59E0B] shrink-0" title="Cần phân tích lại mặt đường" />
           )}
         </button>
 
@@ -406,7 +411,7 @@ export default function RightInspectorPanel({
           type="button"
           onClick={() => setActiveSubTab('layers')}
           title="Quản lý và hiển thị các lớp CAD/GIS"
-          className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-2 px-1 rounded-md text-[12px] font-semibold transition-all cursor-pointer ${
+          className={`min-w-0 flex items-center justify-center gap-1 py-2 px-0.5 sm:px-1 rounded-md text-[11.5px] font-semibold transition-all cursor-pointer ${
             activeSubTab === 'layers'
               ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
               : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
@@ -414,7 +419,7 @@ export default function RightInspectorPanel({
         >
           <span className="truncate">Lớp CAD</span>
           {activeLayerStats.length > 0 && (
-            <span className="text-[10px] font-mono px-1 py-0.2 rounded-full bg-[#22B7C9]/15 text-[#22B7C9] tabular-nums shrink-0">
+            <span className="text-[9.5px] font-mono px-1 py-0 rounded-full bg-[#22B7C9]/15 text-[#22B7C9] tabular-nums font-bold shrink-0">
               {activeLayerStats.length}
             </span>
           )}
@@ -424,7 +429,7 @@ export default function RightInspectorPanel({
           type="button"
           onClick={() => setActiveSubTab('segments')}
           title="Phân đoạn khảo sát và theo dõi thi công"
-          className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-2 px-1 rounded-md text-[12px] font-semibold transition-all cursor-pointer ${
+          className={`min-w-0 flex items-center justify-center gap-1 py-2 px-0.5 sm:px-1 rounded-md text-[11.5px] font-semibold transition-all cursor-pointer ${
             activeSubTab === 'segments'
               ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
               : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
@@ -432,7 +437,7 @@ export default function RightInspectorPanel({
         >
           <span className="truncate">Phân đoạn</span>
           {dynamicSegments.length > 0 && (
-            <span className="text-[10px] font-mono px-1 py-0.2 rounded-full bg-[#39B58A]/15 text-[#39B58A] tabular-nums shrink-0">
+            <span className="text-[9.5px] font-mono px-1 py-0 rounded-full bg-[#39B58A]/15 text-[#39B58A] tabular-nums font-bold shrink-0">
               {dynamicSegments.length}
             </span>
           )}
@@ -442,7 +447,7 @@ export default function RightInspectorPanel({
           type="button"
           onClick={() => setActiveSubTab('coords')}
           title="Tra cứu & chuyển đổi tọa độ VN-2000 / WGS-84"
-          className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-2 px-1 rounded-md text-[12px] font-semibold transition-all cursor-pointer ${
+          className={`min-w-0 flex items-center justify-center gap-1 py-2 px-0.5 sm:px-1 rounded-md text-[11.5px] font-semibold transition-all cursor-pointer ${
             activeSubTab === 'coords'
               ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
               : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
@@ -705,9 +710,10 @@ export default function RightInspectorPanel({
                   <button
                     type="button"
                     onClick={handleExportExcel}
-                    disabled={isSurfaceAreaProvisional}
+                    disabled={isExcelExportBlocked}
+                    title={getExportBlockedReason('excel') || 'Xuất Báo Cáo Khối Lượng (.XLSX - 3 Sheets)'}
                     className={`w-full py-2.5 px-4 rounded-md font-semibold text-[13px] flex items-center justify-center gap-2 transition-colors border ${
-                      isSurfaceAreaProvisional
+                      isExcelExportBlocked
                         ? 'bg-[#17263C]/50 text-[#7E92AA] border-[#27384E] cursor-not-allowed opacity-75'
                         : 'bg-[#39B58A] hover:bg-[#39B58A]/90 text-[#0B1220] border-[#39B58A] cursor-pointer font-bold'
                     }`}
@@ -719,9 +725,10 @@ export default function RightInspectorPanel({
                   <button
                     type="button"
                     onClick={handleExportGeoJson}
-                    disabled={isSurfaceAreaProvisional}
+                    disabled={isGeoJsonExportBlocked}
+                    title={getExportBlockedReason('geojson') || 'Tải Dữ Liệu GeoJSON Chuẩn RFC 7946'}
                     className={`w-full py-2.5 px-4 rounded-md font-semibold text-[13px] flex items-center justify-center gap-2 transition-colors border ${
-                      isSurfaceAreaProvisional
+                      isGeoJsonExportBlocked
                         ? 'bg-[#17263C]/50 text-[#7E92AA] border-[#27384E] cursor-not-allowed opacity-75'
                         : 'bg-[#17263C] hover:bg-[#1E314D] text-[#E8EEF6] border-[#27384E] hover:border-[#22B7C9]/60 cursor-pointer'
                     }`}

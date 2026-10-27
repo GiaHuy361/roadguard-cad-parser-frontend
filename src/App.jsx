@@ -147,13 +147,18 @@ export default function App() {
     ssotMetrics?.analyzedRoadWidth || normalizedParams.roadWidth
   )
 
-  const isExportBlocked =
-    isSurfaceAreaProvisional ||
-    isCrsStale ||
-    crsLifecycleState === 'UNCONFIGURED' ||
-    crsLifecycleState === 'INVALID_CONFIG'
+  const isWgs84Source =
+    inspectorBridge.sourceDataKind === 'wgs84' ||
+    exportGeoJson?.sourceDataKind === 'WGS84_IMPORT'
 
-  const getExportBlockedReason = () => {
+  const getExportBlockedReason = (targetFormat = 'all') => {
+    if (isSurfaceAreaProvisional) {
+      return `Bề rộng mặt đường đã đổi từ ${analyzedRoadWidth}m sang ${normalizedParams.roadWidth}m. Vui lòng bấm Cập Nhật & Dựng Lại Mặt Đường trước khi xuất dữ liệu chính thức.`
+    }
+    // If source is already WGS-84, pure GeoJSON export does not require VN-2000 CRS
+    if (isWgs84Source && targetFormat === 'geojson') {
+      return null
+    }
     if (crsLifecycleState === 'UNCONFIGURED') {
       return 'Hệ quy chiếu VN-2000 chưa được cấu hình. Vui lòng chọn L₀ và phân tích trước khi xuất dữ liệu.'
     }
@@ -163,11 +168,13 @@ export default function App() {
     if (isCrsStale) {
       return 'Cấu hình CRS đã thay đổi (STALE). Vui lòng bấm Phân Tích Lại trước khi xuất dữ liệu.'
     }
-    if (isSurfaceAreaProvisional) {
-      return `Bề rộng mặt đường đã đổi từ ${analyzedRoadWidth}m sang ${normalizedParams.roadWidth}m. Vui lòng bấm Cập Nhật & Dựng Lại Mặt Đường trước khi xuất dữ liệu chính thức.`
-    }
     return null
   }
+
+  const isGeoJsonExportBlocked = Boolean(getExportBlockedReason('geojson'))
+  const isExcelExportBlocked = Boolean(getExportBlockedReason('excel'))
+  const isDraftExportBlocked = Boolean(getExportBlockedReason('draft'))
+  const isExportBlocked = isExcelExportBlocked
 
   const layerVisibility = useMemo(
     () => ({
@@ -234,7 +241,7 @@ export default function App() {
 
   const handleCopyGeoJson = () => {
     if (!exportGeoJson) return
-    const blockedReason = getExportBlockedReason()
+    const blockedReason = getExportBlockedReason('geojson')
     if (blockedReason) {
       toast.error(blockedReason, { duration: 5000 })
       return
@@ -256,7 +263,7 @@ export default function App() {
 
   const handleDownloadGeoJsonFile = () => {
     if (!exportGeoJson) return
-    const blockedReason = getExportBlockedReason()
+    const blockedReason = getExportBlockedReason('geojson')
     if (blockedReason) {
       toast.error(blockedReason, { duration: 5000 })
       return
@@ -275,6 +282,11 @@ export default function App() {
 
   const handleQuickExcel = async () => {
     if (!exportGeoJson && !analyticsData) return
+    const blockedReason = getExportBlockedReason('excel')
+    if (blockedReason) {
+      toast.error(blockedReason, { duration: 5000 })
+      return
+    }
     await downloadExcelReport({
       geoJsonData: exportGeoJson,
       analyticsData: ssotMetrics || analyticsData,
@@ -441,26 +453,14 @@ export default function App() {
             <button
               type="button"
               onClick={handleQuickExcel}
-              disabled={isSurfaceAreaProvisional || isCrsStale}
-              title={
-                isCrsStale
-                  ? 'Cấu hình CRS đã thay đổi: Hãy bấm Phân Tích Lại trước khi xuất Excel'
-                  : isSurfaceAreaProvisional
-                  ? 'Đang khóa xuất chính thức: Hãy bấm Phân Tích Lại sau khi đổi bề rộng B'
-                  : 'Xuất báo cáo khối lượng kỹ thuật ra file Excel (.XLSX - 3 Sheets)'
-              }
-              aria-label={
-                isCrsStale
-                  ? 'Cấu hình CRS đã thay đổi: Hãy bấm Phân Tích Lại trước khi xuất Excel'
-                  : isSurfaceAreaProvisional
-                  ? 'Đang khóa xuất chính thức: Hãy bấm Phân Tích Lại sau khi đổi bề rộng B'
-                  : 'Xuất báo cáo khối lượng kỹ thuật ra file Excel (.XLSX - 3 Sheets)'
-              }
+              disabled={isExcelExportBlocked}
+              title={getExportBlockedReason('excel') || 'Xuất báo cáo khối lượng kỹ thuật ra file Excel (.XLSX - 3 Sheets)'}
+              aria-label={getExportBlockedReason('excel') || 'Xuất báo cáo khối lượng kỹ thuật ra file Excel (.XLSX - 3 Sheets)'}
               className={`hidden md:flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-md text-[12.5px] font-semibold transition-colors border whitespace-nowrap ${
-                isCrsStale
-                  ? 'bg-[#EF4444]/15 border-[#EF4444]/50 text-[#FCA5A5] cursor-not-allowed opacity-75'
-                  : isSurfaceAreaProvisional
-                  ? 'bg-[#F59E0B]/15 border-[#F59E0B]/50 text-[#F59E0B] cursor-not-allowed opacity-75'
+                isExcelExportBlocked
+                  ? isCrsStale
+                    ? 'bg-[#EF4444]/15 border-[#EF4444]/50 text-[#FCA5A5] cursor-not-allowed opacity-75'
+                    : 'bg-[#F59E0B]/15 border-[#F59E0B]/50 text-[#F59E0B] cursor-not-allowed opacity-75'
                   : 'bg-[#39B58A] hover:bg-[#39B58A]/90 border-[#39B58A] text-[#0B1220] font-bold cursor-pointer'
               }`}
             >
@@ -636,12 +636,19 @@ export default function App() {
                         </span>
                       </div>
                       {exportGeoJson && (
-                        <div className="text-[11.5px] text-[#A9B9CE] font-mono tabular-nums mt-0.5">
-                          Features: {exportGeoJson.features?.length || 0} • Bbox:{' '}
-                          {Array.isArray(exportGeoJson.bbox)
-                            ? `[${exportGeoJson.bbox.map((v) => Number(v).toFixed(5)).join(', ')}]`
-                            : 'N/A'}{' '}
-                          • {(JSON.stringify(exportGeoJson).length / 1024).toFixed(1)} KB
+                        <div className="flex items-center flex-wrap gap-x-2 gap-y-1 text-[11.5px] text-[#A9B9CE] font-mono tabular-nums mt-0.5">
+                          <span>Features: <strong className="text-[#E8EEF6]">{exportGeoJson.features?.length || 0}</strong></span>
+                          <span>•</span>
+                          <span className="inline-flex items-center gap-1">
+                            Bbox:
+                            <span className="px-1.5 py-0.2 rounded bg-[#0B1220] border border-[#27384E] text-[#22B7C9] text-[10.5px]">
+                              {Array.isArray(exportGeoJson.bbox)
+                                ? `[${exportGeoJson.bbox.map((v) => Number(v).toFixed(5)).join(', ')}]`
+                                : 'N/A'}
+                            </span>
+                          </span>
+                          <span>•</span>
+                          <span>{(JSON.stringify(exportGeoJson).length / 1024).toFixed(1)} KB</span>
                         </div>
                       )}
                     </div>
@@ -663,9 +670,10 @@ export default function App() {
                       <button
                         type="button"
                         onClick={handleCopyGeoJson}
-                        disabled={isSurfaceAreaProvisional}
+                        disabled={isGeoJsonExportBlocked}
+                        title={getExportBlockedReason('geojson') || 'Sao Chép Toàn Bộ GeoJSON (RFC 7946)'}
                         className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[12.5px] font-semibold transition-all border ${
-                          isSurfaceAreaProvisional
+                          isGeoJsonExportBlocked
                             ? 'bg-[#17263C]/50 text-[#7E92AA] border-[#27384E] cursor-not-allowed'
                             : 'bg-[#22B7C9] hover:bg-[#35CBE0] text-[#0B1220] border-[#22B7C9] font-bold cursor-pointer'
                         }`}
@@ -677,9 +685,10 @@ export default function App() {
                       <button
                         type="button"
                         onClick={handleDownloadGeoJsonFile}
-                        disabled={isSurfaceAreaProvisional}
+                        disabled={isGeoJsonExportBlocked}
+                        title={getExportBlockedReason('geojson') || 'Tải Tệp GeoJSON (RFC 7946)'}
                         className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[12.5px] font-semibold transition-all border ${
-                          isSurfaceAreaProvisional
+                          isGeoJsonExportBlocked
                             ? 'bg-[#17263C]/50 text-[#7E92AA] border-[#27384E] cursor-not-allowed'
                             : 'bg-[#17263C] hover:bg-[#1E314D] border-[#27384E] text-[#E8EEF6] cursor-pointer'
                         }`}
@@ -691,9 +700,10 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setShowRoadGuardDraftModal(true)}
-                        disabled={isSurfaceAreaProvisional}
+                        disabled={isDraftExportBlocked}
+                        title={getExportBlockedReason('draft') || 'Xuất RoadGuard Draft (.json)'}
                         className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[12.5px] font-bold transition-all border ${
-                          isSurfaceAreaProvisional
+                          isDraftExportBlocked
                             ? 'bg-[#17263C]/50 text-[#7E92AA] border-[#27384E] cursor-not-allowed'
                             : 'bg-[#F06421] hover:bg-[#FF7635] border-[#F06421] text-white cursor-pointer'
                         }`}
@@ -720,7 +730,7 @@ export default function App() {
                           </div>
                         </div>
                       )}
-                      <pre className="p-5 rounded-xl bg-[#111D2E] border border-[#27384E] shadow-xl whitespace-pre-wrap break-words text-[#E8EEF6] select-text cursor-text leading-relaxed">
+                      <pre className="p-5 rounded-xl bg-[#111D2E] border border-[#27384E] shadow-xl overflow-x-auto whitespace-pre font-mono text-[12px] text-[#E8EEF6] select-text cursor-text leading-relaxed">
                         {formattedJsonPreview}
                       </pre>
                       {!showFullJson &&

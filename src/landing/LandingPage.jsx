@@ -523,46 +523,29 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* ── Lời kêu gọi cuối trang ── */}
-        <section aria-labelledby="cta-title" className="border-b border-[#27384E] bg-gradient-to-b from-[#0B1220] to-[#111D2E]">
-          <div className="mx-auto max-w-[1240px] px-5 sm:px-8 py-16 sm:py-20 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-8">
-            <div>
-              <span className="text-[12px] font-mono text-[#F06421] uppercase tracking-wider">
-                Khởi chạy ngay
-              </span>
-              <h2 id="cta-title" className="mt-2 text-[26px] sm:text-[32px] font-bold tracking-tight text-white">
-                Sẵn sàng xử lý dữ liệu CAD &amp; GIS
-              </h2>
-              <p className="mt-2 text-[14.5px] text-[#A9B9CE]">
-                Không cần cài đặt, không cần đăng nhập. Bắt đầu ngay với trình duyệt web của bạn.
-              </p>
-            </div>
-            <OpenStudio size="lg">Mở CAD &amp; GIS STUDIO</OpenStudio>
-          </div>
-        </section>
       </main>
 
-      {/* ── Footer ── */}
-      <footer className="bg-[#0B1220]">
-        <div className="mx-auto max-w-[1240px] px-5 sm:px-8 py-10 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-          <Brand size="sm" />
-          <nav aria-label="Liên kết chân trang" className="flex flex-wrap gap-x-8 gap-y-2">
-            {NAV.map((item) => (
-              <a
-                key={item.id}
-                href={`#${item.id}`}
-                onClick={(e) => scrollToSection(e, item.id)}
-                className="text-[13px] text-[#A9B9CE] hover:text-white transition-colors"
-              >
-                {item.label}
-              </a>
-            ))}
-            <a href="/studio" onClick={linkHandler('/studio')} className="text-[13px] text-[#F06421] hover:text-[#FF7635] font-semibold transition-colors">
-              Mở Studio
+      {/* ── Footer Tối Giản Kỹ Thuật (Minimalist Single-band Technical Footer) ── */}
+      <footer className="border-t border-[#27384E] bg-[#080D17] py-8">
+        <div className="mx-auto max-w-[1240px] px-5 sm:px-8 flex flex-col md:flex-row md:items-center md:justify-between gap-5">
+          <div className="flex items-center gap-3">
+            <Brand size="sm" />
+          </div>
+
+          <p className="text-[12px] sm:text-[12.5px] font-mono text-[#8FA3BA] text-center md:text-left leading-relaxed">
+            Bản vẽ CAD (.DXF) · Hệ quy chiếu VN-2000 · WGS-84 RFC 7946 · Báo cáo khối lượng kỹ thuật
+          </p>
+
+          <div className="flex items-center justify-center md:justify-end gap-3 text-[12px] font-mono text-[#7E92AA] shrink-0">
+            <span>Phiên bản v2.5</span>
+            <span>•</span>
+            <a
+              href="/studio"
+              onClick={linkHandler('/studio')}
+              className="text-[#F06421] hover:text-[#FF7635] font-semibold transition-colors"
+            >
+              Mở Studio →
             </a>
-          </nav>
-          <div className="text-[12px] font-mono text-[#7E92AA]">
-            Phiên bản 2.5 • CAD &amp; GIS STUDIO
           </div>
         </div>
       </footer>
