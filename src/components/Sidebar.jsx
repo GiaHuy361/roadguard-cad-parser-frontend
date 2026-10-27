@@ -93,6 +93,8 @@ export default function Sidebar({
   const [activeCenterlineLayer, setActiveCenterlineLayer] = useState(null)
   const [coordsText, setCoordsText] = useState('')
   const [axisAmbiguityAlert, setAxisAmbiguityAlert] = useState(null)
+  const activeRequestIdRef = useRef(0)
+  const abortControllerRef = useRef(null)
   const [wgs84SubMode, setWgs84SubMode] = useState('geojson') // 'geojson' | 'coords'
   const [wgs84Text, setWgs84Text] = useState('')
   const [wgs84FileName, setWgs84FileName] = useState('')
@@ -210,6 +212,11 @@ export default function Sidebar({
       const dropped = e.dataTransfer.files[0]
       const name = dropped?.name.toLowerCase()
       if (name && (name.endsWith('.dxf') || name.endsWith('.dwg'))) {
+        activeRequestIdRef.current++
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort()
+          abortControllerRef.current = null
+        }
         setFile(dropped)
         setInputMode('cad')
         setCandidateLayers([])
@@ -225,6 +232,11 @@ export default function Sidebar({
   const handleFileChange = (e) => {
     const selected = e.target.files[0]
     if (selected) {
+      activeRequestIdRef.current++
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+        abortControllerRef.current = null
+      }
       setFile(selected)
       setInputMode('cad')
       setCandidateLayers([])
@@ -266,6 +278,13 @@ export default function Sidebar({
       }
       const k0Val = k0Num
 
+      const currentReqId = ++activeRequestIdRef.current
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+      const controller = new AbortController()
+      abortControllerRef.current = controller
+
       setLoading(true)
       const tid = toast.loading(
         targetLayer
@@ -278,6 +297,7 @@ export default function Sidebar({
         roadFd.append('RoadWidth', exactRoadWidth.toString())
         roadFd.append('CentralMeridian', cmVal.toString())
         roadFd.append('ScaleFactor', k0Val.toString())
+        roadFd.append('AxisOrder', axisOrder)
         if (targetLayer) {
           roadFd.append('CenterlineLayerName', targetLayer)
         }
@@ -288,6 +308,7 @@ export default function Sidebar({
         parseFd.append('tessellationSegments', '72')
         parseFd.append('centralMeridian', cmVal.toString())
         parseFd.append('scaleFactor', k0Val.toString())
+        parseFd.append('axisOrder', axisOrder)
         parseFd.append('SegmentLength', normParams.segmentLength.toString())
         parseFd.append('RoadWidth', exactRoadWidth.toString())
         parseFd.append('SlabLength', normParams.slabLength.toString())
@@ -298,11 +319,18 @@ export default function Sidebar({
         const [roadResult, parseResult] = await Promise.allSettled([
           axios.post(`${API_BASE}/api/cad/parse-road`, roadFd, {
             headers: { 'Content-Type': 'multipart/form-data' },
+            signal: controller.signal,
           }),
           axios.post(`${API_BASE}/api/cad/parse-dxf`, parseFd, {
             headers: { 'Content-Type': 'multipart/form-data' },
+            signal: controller.signal,
           }),
         ])
+
+        if (currentReqId !== activeRequestIdRef.current) {
+          // Stale response discarded: a newer analysis or file selection occurred
+          return
+        }
 
         let loadedSomething = false
 
@@ -389,6 +417,9 @@ export default function Sidebar({
           toast.error(`Lỗi: ${msg}`, { id: tid })
         }
       } catch (err) {
+        if (currentReqId !== activeRequestIdRef.current || axios.isCancel?.(err) || err?.name === 'CanceledError') {
+          return
+        }
         const msg =
           err?.response?.data?.detail ||
           err?.response?.data?.message ||
@@ -396,7 +427,9 @@ export default function Sidebar({
           'Lỗi kết nối máy chủ'
         toast.error(`Lỗi: ${msg}`, { id: tid })
       } finally {
-        setLoading(false)
+        if (currentReqId === activeRequestIdRef.current) {
+          setLoading(false)
+        }
       }
     },
     [
@@ -449,6 +482,13 @@ export default function Sidebar({
       }
       const k0Val = k0Num
 
+      const currentReqId = ++activeRequestIdRef.current
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+      const controller = new AbortController()
+      abortControllerRef.current = controller
+
       setLoading(true)
       const tid = toast.loading('Đang dựng tuyến từ tọa độ VN-2000…')
       try {
@@ -458,7 +498,13 @@ export default function Sidebar({
           centralMeridian: cmVal,
           scaleFactor: k0Val,
           axisOrder: effectiveAxisOrder,
+        }, {
+          signal: controller.signal,
         })
+
+        if (currentReqId !== activeRequestIdRef.current) {
+          return
+        }
         const roadData = res.data
         if (!roadData?.success) {
           throw new Error(roadData?.detail || 'Không thể dựng tuyến từ tọa độ')
