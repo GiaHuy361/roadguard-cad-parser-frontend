@@ -525,27 +525,20 @@ export default function LandingPage() {
 
       </main>
 
-      {/* ── Footer Tối Giản Kỹ Thuật (Minimalist Single-band Technical Footer) ── */}
-      <footer className="border-t border-[#27384E] bg-[#080D17] py-8">
-        <div className="mx-auto max-w-[1240px] px-5 sm:px-8 flex flex-col md:flex-row md:items-center md:justify-between gap-5">
-          <div className="flex items-center gap-3">
-            <Brand size="sm" />
+      {/* ── Footer Tối Giản Kỹ Thuật (Minimal Technical Footer) ── */}
+      <footer className="border-t border-[#1E2E42] bg-[#070C14] py-6 sm:py-7">
+        <div className="mx-auto max-w-[1240px] px-5 sm:px-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-6">
+          <div>
+            <div className="text-[13px] font-medium tracking-tight text-[#E8EEF6]">
+              © 2026 CAD &amp; GIS STUDIO
+            </div>
+            <div className="text-[12px] text-[#7E92AA] mt-0.5">
+              Không gian xử lý dữ liệu kỹ thuật
+            </div>
           </div>
 
-          <p className="text-[12px] sm:text-[12.5px] font-mono text-[#8FA3BA] text-center md:text-left leading-relaxed">
-            Bản vẽ CAD (.DXF) · Hệ quy chiếu VN-2000 · WGS-84 RFC 7946 · Báo cáo khối lượng kỹ thuật
-          </p>
-
-          <div className="flex items-center justify-center md:justify-end gap-3 text-[12px] font-mono text-[#7E92AA] shrink-0">
-            <span>Phiên bản v2.5</span>
-            <span>•</span>
-            <a
-              href="/studio"
-              onClick={linkHandler('/studio')}
-              className="text-[#F06421] hover:text-[#FF7635] font-semibold transition-colors"
-            >
-              Mở Studio →
-            </a>
+          <div className="text-[12px] font-mono text-[#8FA3BA] tracking-wide sm:text-right">
+            DXF · VN-2000 · WGS-84 · GeoJSON
           </div>
         </div>
       </footer>
