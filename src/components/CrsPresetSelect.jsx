@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react'
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Search, X, Compass, AlertCircle } from 'lucide-react'
 import { VN2000_REFERENCE_PRESETS } from '../utils/roadEngineeringBuilder'
@@ -15,6 +15,7 @@ import { useFloatingPortal } from './useFloatingPortal'
  *   - Auto-flipping placement (opens upwards when cramped near viewport bottom)
  *   - Search filtering (supports unaccented Vietnamese search)
  *   - Full keyboard navigation (Esc, Arrow keys, Enter)
+ *   - Event propagation safe: isolated trigger & listbox keyboard handlers
  */
 export default function CrsPresetSelect({
   selectedPresetId,
@@ -29,9 +30,13 @@ export default function CrsPresetSelect({
   const searchInputRef = useRef(null)
   const listRef = useRef(null)
 
+  const handleClose = useCallback(() => {
+    setIsOpen(false)
+  }, [])
+
   const { triggerRef, popoverRef, coords } = useFloatingPortal({
     isOpen,
-    onClose: () => setIsOpen(false),
+    onClose: handleClose,
   })
 
   // Find active preset object
@@ -72,30 +77,45 @@ export default function CrsPresetSelect({
     }
   }, [isOpen])
 
-  // Keyboard navigation
-  const handleKeyDown = (e) => {
-    if (!isOpen) {
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
-        e.preventDefault()
-        setIsOpen(true)
+  // Keep highlighted item in view within the popover list
+  useEffect(() => {
+    if (highlightedIndex >= 0 && listRef.current) {
+      const el = listRef.current.querySelector('[data-highlighted="true"]')
+      if (el) {
+        el.scrollIntoView({ block: 'nearest' })
       }
-      return
     }
+  }, [highlightedIndex])
 
+  // Keyboard activation on closed trigger button
+  const handleTriggerKeyDown = (e) => {
+    if (disabled) return
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      setIsOpen(true)
+    }
+  }
+
+  // Keyboard navigation inside popover listbox
+  const handlePopoverKeyDown = (e) => {
     const totalItems = filteredPresets.length + 2 // + custom + unconfigured
 
     if (e.key === 'Escape') {
       e.preventDefault()
+      e.stopPropagation()
       setIsOpen(false)
       triggerRef.current?.focus()
     } else if (e.key === 'ArrowDown') {
       e.preventDefault()
+      e.stopPropagation()
       setHighlightedIndex((prev) => (prev + 1 >= totalItems ? 0 : prev + 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
+      e.stopPropagation()
       setHighlightedIndex((prev) => (prev - 1 < 0 ? totalItems - 1 : prev - 1))
     } else if (e.key === 'Enter') {
       e.preventDefault()
+      e.stopPropagation()
       if (highlightedIndex >= 0 && highlightedIndex < filteredPresets.length) {
         onSelectPreset(filteredPresets[highlightedIndex].id)
         setIsOpen(false)
@@ -150,13 +170,14 @@ export default function CrsPresetSelect({
   }, [selectedPresetId, activePreset, selectedCm, scaleFactor])
 
   return (
-    <div className="relative w-full text-left" onKeyDown={handleKeyDown}>
+    <div className="relative w-full text-left">
       {/* Trigger Button */}
       <button
         ref={triggerRef}
         type="button"
         disabled={disabled}
         onClick={() => setIsOpen((prev) => !prev)}
+        onKeyDown={handleTriggerKeyDown}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-label="Chọn hệ quy chiếu VN-2000 kinh tuyến trục và múi chiếu"
@@ -198,7 +219,7 @@ export default function CrsPresetSelect({
             ref={popoverRef}
             role="listbox"
             tabIndex={-1}
-            onKeyDown={handleKeyDown}
+            onKeyDown={handlePopoverKeyDown}
             style={{
               position: 'fixed',
               top: `${coords.top}px`,
@@ -250,6 +271,7 @@ export default function CrsPresetSelect({
                     key={preset.id}
                     role="option"
                     aria-selected={isSelected}
+                    data-highlighted={isHighlighted ? 'true' : undefined}
                     onClick={() => {
                       onSelectPreset(preset.id)
                       setIsOpen(false)
@@ -293,6 +315,7 @@ export default function CrsPresetSelect({
               <div
                 role="option"
                 aria-selected={selectedPresetId === 'custom'}
+                data-highlighted={highlightedIndex === filteredPresets.length ? 'true' : undefined}
                 onClick={() => {
                   onSelectPreset('custom')
                   setIsOpen(false)
@@ -301,6 +324,8 @@ export default function CrsPresetSelect({
                 className={`p-2.5 flex items-center justify-between gap-2.5 cursor-pointer transition-colors bg-[#111D2E]/40 ${
                   selectedPresetId === 'custom'
                     ? 'bg-[#17263C] border-l-2 border-l-[#F06421]'
+                    : highlightedIndex === filteredPresets.length
+                    ? 'bg-[#142033]'
                     : 'hover:bg-[#142033]'
                 }`}
               >
@@ -322,6 +347,7 @@ export default function CrsPresetSelect({
               <div
                 role="option"
                 aria-selected={selectedPresetId === 'unconfigured'}
+                data-highlighted={highlightedIndex === filteredPresets.length + 1 ? 'true' : undefined}
                 onClick={() => {
                   onSelectPreset('unconfigured')
                   setIsOpen(false)
@@ -330,6 +356,8 @@ export default function CrsPresetSelect({
                 className={`p-2.5 flex items-center justify-between gap-2.5 cursor-pointer transition-colors bg-[#111D2E]/20 ${
                   selectedPresetId === 'unconfigured'
                     ? 'bg-[#17263C] border-l-2 border-l-[#F59E0B]'
+                    : highlightedIndex === filteredPresets.length + 1
+                    ? 'bg-[#142033]'
                     : 'hover:bg-[#142033]'
                 }`}
               >

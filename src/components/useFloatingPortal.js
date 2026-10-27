@@ -10,10 +10,18 @@ import { useState, useEffect, useRef, useCallback } from 'react'
  *   2. Responsive boundary clamping (never overflows screen width on mobile/tablet).
  *   3. Dynamic tracking on ancestor scroll (capture: true) and window resize.
  *   4. Unified click-outside detection across trigger and portal.
+ *   5. Infinite-loop & render-churn proof: ref-stabilized callbacks + shallow equality coords update.
  */
 export function useFloatingPortal({ isOpen, onClose }) {
   const triggerRef = useRef(null)
   const popoverRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+
+  // Keep latest onClose callback in ref without invalidating effects or triggering re-renders
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
   const [coords, setCoords] = useState({
     top: 0,
     left: 0,
@@ -22,6 +30,7 @@ export function useFloatingPortal({ isOpen, onClose }) {
     placement: 'bottom',
   })
 
+  // Completely stable position calculator across renders
   const updatePosition = useCallback(() => {
     if (!triggerRef.current) return
     const rect = triggerRef.current.getBoundingClientRect()
@@ -32,7 +41,7 @@ export function useFloatingPortal({ isOpen, onClose }) {
 
     // If trigger element has completely scrolled out of viewport, auto-close
     if (rect.bottom < -20 || rect.top > viewportHeight + 20) {
-      if (onClose) onClose()
+      if (onCloseRef.current) onCloseRef.current()
       return
     }
 
@@ -64,14 +73,28 @@ export function useFloatingPortal({ isOpen, onClose }) {
       left = margin
     }
 
-    setCoords({
+    const nextCoords = {
       top: Math.round(top),
       left: Math.round(left),
       width: Math.round(width),
       maxHeight: Math.round(maxHeight),
       placement,
+    }
+
+    // Bail out if coords have not changed to prevent render loops or excessive churn
+    setCoords((prev) => {
+      if (
+        prev.top === nextCoords.top &&
+        prev.left === nextCoords.left &&
+        prev.width === nextCoords.width &&
+        prev.maxHeight === nextCoords.maxHeight &&
+        prev.placement === nextCoords.placement
+      ) {
+        return prev
+      }
+      return nextCoords
     })
-  }, [onClose])
+  }, [])
 
   useEffect(() => {
     if (!isOpen) return
@@ -93,7 +116,7 @@ export function useFloatingPortal({ isOpen, onClose }) {
         popoverRef.current &&
         !popoverRef.current.contains(event.target)
       ) {
-        if (onClose) onClose()
+        if (onCloseRef.current) onCloseRef.current()
       }
     }
 
@@ -104,7 +127,7 @@ export function useFloatingPortal({ isOpen, onClose }) {
       window.removeEventListener('scroll', handleScrollOrResize, true)
       document.removeEventListener('pointerdown', handleClickOutside)
     }
-  }, [isOpen, updatePosition, onClose])
+  }, [isOpen, updatePosition])
 
   return { triggerRef, popoverRef, coords, updatePosition }
 }

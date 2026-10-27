@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react'
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Search, X, Layers, Sparkles, HelpCircle } from 'lucide-react'
 import { useFloatingPortal } from './useFloatingPortal'
@@ -14,6 +14,7 @@ import { useFloatingPortal } from './useFloatingPortal'
  *   - Entity count & total CAD length
  *   - ⭐ [Đề xuất] badge on high-confidence layers
  *   - Explanatory footnote clarifying total entity length vs chained centerline length
+ *   - Event propagation safe: isolated trigger & listbox keyboard handlers
  */
 export default function CandidateLayerSelect({
   candidateLayers = [],
@@ -25,10 +26,15 @@ export default function CandidateLayerSelect({
   const [searchQuery, setSearchQuery] = useState('')
   const [highlightedIndex, setHighlightedIndex] = useState(-1)
   const searchInputRef = useRef(null)
+  const listRef = useRef(null)
+
+  const handleClose = useCallback(() => {
+    setIsOpen(false)
+  }, [])
 
   const { triggerRef, popoverRef, coords } = useFloatingPortal({
     isOpen,
-    onClose: () => setIsOpen(false),
+    onClose: handleClose,
   })
 
   // Determine currently selected candidate object
@@ -64,30 +70,45 @@ export default function CandidateLayerSelect({
     }
   }, [isOpen])
 
-  // Keyboard navigation
-  const handleKeyDown = (e) => {
-    if (!isOpen) {
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
-        e.preventDefault()
-        setIsOpen(true)
+  // Keep highlighted item in view within the popover list
+  useEffect(() => {
+    if (highlightedIndex >= 0 && listRef.current) {
+      const el = listRef.current.querySelector('[data-highlighted="true"]')
+      if (el) {
+        el.scrollIntoView({ block: 'nearest' })
       }
-      return
     }
+  }, [highlightedIndex])
 
+  // Keyboard activation on closed trigger button
+  const handleTriggerKeyDown = (e) => {
+    if (disabled) return
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      setIsOpen(true)
+    }
+  }
+
+  // Keyboard navigation inside popover listbox
+  const handlePopoverKeyDown = (e) => {
     const total = filteredLayers.length
 
     if (e.key === 'Escape') {
       e.preventDefault()
+      e.stopPropagation()
       setIsOpen(false)
       triggerRef.current?.focus()
     } else if (e.key === 'ArrowDown') {
       e.preventDefault()
+      e.stopPropagation()
       setHighlightedIndex((prev) => (prev + 1 >= total ? 0 : prev + 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
+      e.stopPropagation()
       setHighlightedIndex((prev) => (prev - 1 < 0 ? total - 1 : prev - 1))
     } else if (e.key === 'Enter') {
       e.preventDefault()
+      e.stopPropagation()
       if (highlightedIndex >= 0 && highlightedIndex < filteredLayers.length) {
         onSelectLayer(filteredLayers[highlightedIndex].name)
         setIsOpen(false)
@@ -101,7 +122,7 @@ export default function CandidateLayerSelect({
   }
 
   return (
-    <div className="relative w-full text-left" onKeyDown={handleKeyDown}>
+    <div className="relative w-full text-left">
       <div className="flex items-center justify-between text-[12px] mb-1.5">
         <span className="font-semibold text-[#E8EEF6] flex items-center gap-1.5">
           <Layers className="w-3.5 h-3.5 text-[#22B7C9]" />
@@ -118,6 +139,7 @@ export default function CandidateLayerSelect({
         type="button"
         disabled={disabled}
         onClick={() => setIsOpen((prev) => !prev)}
+        onKeyDown={handleTriggerKeyDown}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-label="Chọn layer tim tuyến DXF"
@@ -160,7 +182,7 @@ export default function CandidateLayerSelect({
             ref={popoverRef}
             role="listbox"
             tabIndex={-1}
-            onKeyDown={handleKeyDown}
+            onKeyDown={handlePopoverKeyDown}
             style={{
               position: 'fixed',
               top: `${coords.top}px`,
@@ -204,7 +226,10 @@ export default function CandidateLayerSelect({
             </div>
 
             {/* Candidate Layer List */}
-            <div className="flex-1 overflow-y-auto divide-y divide-[#17263C] overscroll-contain">
+            <div
+              ref={listRef}
+              className="flex-1 overflow-y-auto divide-y divide-[#17263C] overscroll-contain"
+            >
               {filteredLayers.map((c, idx) => {
                 const isSelected =
                   (activeCenterlineLayer && activeCenterlineLayer === c.name) ||
@@ -216,6 +241,7 @@ export default function CandidateLayerSelect({
                     key={c.name}
                     role="option"
                     aria-selected={isSelected}
+                    data-highlighted={isHighlighted ? 'true' : undefined}
                     onClick={() => {
                       onSelectLayer(c.name)
                       setIsOpen(false)
