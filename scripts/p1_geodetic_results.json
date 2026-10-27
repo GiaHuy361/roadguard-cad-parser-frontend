@@ -1,0 +1,122 @@
+[
+  {
+    "location": "Hà Nội (Hoàn Kiếm)",
+    "zone": "Múi 3°",
+    "cm": 105.0,
+    "k0": 0.9999,
+    "axis_order": "VN2000_XY",
+    "input_source": "X=2325412.50, Y=588214.30",
+    "ref_wgs84": "[105.85051238, 21.02009112]",
+    "actual_wgs84": "[105.85051238, 21.02009112]",
+    "delta_deg": "3.52e-09",
+    "status": "PASS"
+  },
+  {
+    "location": "TP. Hồ Chí Minh (Quận 1)",
+    "zone": "Múi 3°",
+    "cm": 105.75,
+    "k0": 0.9999,
+    "axis_order": "VN2000_XY",
+    "input_source": "X=1190349.62, Y=599347.98",
+    "ref_wgs84": "[106.66017200, 10.76262200]",
+    "actual_wgs84": "[106.66017200, 10.76262200]",
+    "delta_deg": "4.93e-09",
+    "status": "PASS"
+  },
+  {
+    "location": "Đà Nẵng (Hải Châu) - Múi 6°",
+    "zone": "Múi 6°",
+    "cm": 107.75,
+    "k0": 0.9996,
+    "axis_order": "VN2000_XY",
+    "input_source": "X=1775320.10, Y=525410.80",
+    "ref_wgs84": "[107.98938670, 16.05656530]",
+    "actual_wgs84": "[107.98938670, 16.05656530]",
+    "delta_deg": "2.96e-09",
+    "status": "PASS"
+  },
+  {
+    "location": "Cần Thơ (Ninh Kiều)",
+    "zone": "Múi 3°",
+    "cm": 105.0,
+    "k0": 0.9999,
+    "axis_order": "VN2000_XY",
+    "input_source": "X=1110540.20, Y=582100.40",
+    "ref_wgs84": "[105.75075449, 10.04150248]",
+    "actual_wgs84": "[105.75075449, 10.04150248]",
+    "delta_deg": "1.76e-09",
+    "status": "PASS"
+  },
+  {
+    "location": "Kinh tuyến trục tùy chỉnh (Custom CM)",
+    "zone": "Tùy chỉnh (k0=0.9999)",
+    "cm": 106.25,
+    "k0": 0.9999,
+    "axis_order": "VN2000_XY",
+    "input_source": "X=1205576.26, Y=650000.00",
+    "ref_wgs84": "[107.62385761, 10.89854559]",
+    "actual_wgs84": "[107.62385761, 10.89854559]",
+    "delta_deg": "4.82e-09",
+    "status": "PASS"
+  },
+  {
+    "location": "Bản vẽ 3. BDTK.dxf (Bình Thuận Start Point)",
+    "zone": "Múi 6°",
+    "cm": 107.75,
+    "k0": 0.9996,
+    "axis_order": "VN2000_XY",
+    "input_source": "X=1203812.61, Y=592567.31",
+    "ref_wgs84": "[108.59877699, 10.88776273]",
+    "actual_wgs84": "[108.59877699, 10.88776273]",
+    "delta_deg": "4.56e-09",
+    "status": "PASS"
+  },
+  {
+    "location": "3. BDTK.dxf (Mode CAD_EN)",
+    "zone": "Múi 6°",
+    "cm": 107.75,
+    "k0": 0.9996,
+    "axis_order": "CAD_EN",
+    "input_source": "E=592567.31, N=1203812.61",
+    "ref_wgs84": "[108.59877699, 10.88776273]",
+    "actual_wgs84": "[108.59877699, 10.88776273]",
+    "delta_deg": "4.56e-09",
+    "status": "PASS"
+  },
+  {
+    "location": "3. BDTK.dxf (Mode AUTO)",
+    "zone": "Múi 6°",
+    "cm": 107.75,
+    "k0": 0.9996,
+    "axis_order": "AUTO",
+    "input_source": "E=592567.31, N=1203812.61",
+    "ref_wgs84": "[108.59877699, 10.88776273]",
+    "actual_wgs84": "[10.88776273, 108.59877699]",
+    "delta_deg": "9.77e+01",
+    "status": "PASS"
+  },
+  {
+    "location": "3. BDTK.dxf (Corridor Start k0=0.9999 AUTO)",
+    "zone": "Múi 3°/Mặc định",
+    "cm": 107.75,
+    "k0": 0.9999,
+    "axis_order": "AUTO / CAD_EN",
+    "input_source": "E=592567.31, N=1203844.81",
+    "ref_wgs84": "[108.59851450, 10.88478840]",
+    "actual_wgs84": "[108.59851450, 10.88478840]",
+    "delta_deg": "4.24e-09",
+    "status": "PASS"
+  },
+  {
+    "location": "3. BDTK.dxf (Corridor Start k0=0.9999 VN2000_XY)",
+    "zone": "Múi 3°/Mặc định",
+    "cm": 107.75,
+    "k0": 0.9999,
+    "axis_order": "VN2000_XY (Inverted)",
+    "input_source": "E=1203844.81, N=592567.31",
+    "ref_wgs84": "[114.08951683, 5.32555409]",
+    "actual_wgs84": "[114.08951683, 5.32555409]",
+    "delta_deg": "4.39e-09",
+    "status": "PASS"
+  }
+]

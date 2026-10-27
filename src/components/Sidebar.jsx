@@ -240,11 +240,8 @@ export default function Sidebar({
       const dropped = e.dataTransfer.files[0]
       const name = dropped?.name.toLowerCase()
       if (name && (name.endsWith('.dxf') || name.endsWith('.dwg'))) {
-        activeRequestIdRef.current++
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort()
-          abortControllerRef.current = null
-        }
+        abortActiveRequest()
+        setLoading(false)
         setFile(dropped)
         setInputMode('cad')
         setCandidateLayers([])
@@ -254,17 +251,14 @@ export default function Sidebar({
         toast.error('Chỉ hỗ trợ file CAD (.dxf, .dwg).')
       }
     },
-    [onCadFileChange]
+    [onCadFileChange, abortActiveRequest]
   )
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0]
     if (selected) {
-      activeRequestIdRef.current++
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort()
-        abortControllerRef.current = null
-      }
+      abortActiveRequest()
+      setLoading(false)
       setFile(selected)
       setInputMode('cad')
       setCandidateLayers([])
@@ -357,6 +351,7 @@ export default function Sidebar({
 
         if (currentReqId !== activeRequestIdRef.current) {
           // Stale response discarded: a newer analysis or file selection occurred
+          toast.dismiss(tid)
           return
         }
 
@@ -531,6 +526,7 @@ export default function Sidebar({
         })
 
         if (currentReqId !== activeRequestIdRef.current) {
+          toast.dismiss(tid)
           return
         }
         const roadData = res.data
