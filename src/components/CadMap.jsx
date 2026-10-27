@@ -352,6 +352,10 @@ export default function CadMap({
 
     if (!data) return
 
+    // If layers are already attached to cad-road-source, existingSource.setData(data) above
+    // has already updated the geometry in GPU memory. Skip expensive teardown and reconstruction!
+    if (map.getLayer('cad-layer-surface-fill')) return
+
     // Xóa các layers cũ nếu có để đảm bảo cập nhật đúng thứ tự z-index và bộ lọc chính xác
     const layerIds = [
       'cad-layer-station-labels',
