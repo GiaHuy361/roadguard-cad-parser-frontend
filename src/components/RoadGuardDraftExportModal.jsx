@@ -22,6 +22,7 @@ export default function RoadGuardDraftExportModal({
   roadParams,
   isSurfaceAreaProvisional = false,
   analyzedRoadWidth = 7.0,
+  isCrsStale = false,
 }) {
   const activeCenterlineFeature = useMemo(() => {
     if (!geoJsonData?.features) return null
@@ -376,6 +377,16 @@ export default function RoadGuardDraftExportModal({
             </div>
           </div>
 
+          {/* Stale CRS Warning */}
+          {isCrsStale && (
+            <div className="p-3 rounded-md bg-[#EF4444]/15 border border-[#EF4444]/50 text-[#FCA5A5] text-[12px] flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-[#EF4444] shrink-0" />
+              <span>
+                Cấu hình hệ tọa độ (L₀/k₀) đã thay đổi sau khi bóc tách. Vui lòng bấm <strong>Phân tích lại</strong> trước khi xuất RoadGuard Draft JSON.
+              </span>
+            </div>
+          )}
+
           {/* Telemetry & Contract Status */}
           <div className="p-3.5 rounded-md bg-[#0B1220] border border-[#27384E] space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#27384E] pb-2">
@@ -460,7 +471,8 @@ export default function RoadGuardDraftExportModal({
             <button
               type="button"
               onClick={handleCopyDraft}
-              disabled={!contractCheck.valid || isSurfaceAreaProvisional}
+              disabled={!contractCheck.valid || isSurfaceAreaProvisional || isCrsStale}
+              title={isCrsStale ? 'Cấu hình CRS đã thay đổi. Vui lòng phân tích lại trước khi xuất.' : undefined}
               className="px-3.5 py-2 rounded-md bg-[#17263C] hover:bg-[#1E314D] disabled:opacity-50 border border-[#27384E] text-[12.5px] font-semibold text-[#E8EEF6] flex items-center gap-1.5 cursor-pointer"
             >
               {copied ? <Check className="w-4 h-4 text-[#39B58A]" /> : <Copy className="w-4 h-4 text-[#22B7C9]" />}
@@ -469,7 +481,8 @@ export default function RoadGuardDraftExportModal({
             <button
               type="button"
               onClick={handleDownloadDraft}
-              disabled={!contractCheck.valid || isSurfaceAreaProvisional}
+              disabled={!contractCheck.valid || isSurfaceAreaProvisional || isCrsStale}
+              title={isCrsStale ? 'Cấu hình CRS đã thay đổi. Vui lòng phân tích lại trước khi xuất.' : undefined}
               className="px-4 py-2 rounded-md bg-[#F06421] hover:bg-[#FF7635] disabled:opacity-50 text-white text-[12.5px] font-bold flex items-center gap-1.5 cursor-pointer"
             >
               <Download className="w-4 h-4" />

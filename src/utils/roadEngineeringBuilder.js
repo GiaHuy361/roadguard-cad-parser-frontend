@@ -263,6 +263,32 @@ export function convertRoadResponseToGeoJson(data, roadParams = {}) {
     roadWidth: roadParams.roadWidth ?? data.roadWidth ?? 7.0,
   })
 
+  if (data.isGeoreferenced === false || data.crsState === 'LOCAL_CAD_NON_GEOREFERENCED') {
+    return {
+      type: 'FeatureCollection',
+      features: [],
+      bbox: null,
+      properties: {
+        isGeoreferenced: false,
+        crsState: 'LOCAL_CAD_NON_GEOREFERENCED',
+        notice: data.notice || 'Bản vẽ sử dụng hệ tọa độ cục bộ (Local CAD) chưa gán tọa độ quốc gia VN-2000.',
+        totalLengthMeters: data.totalLengthMeters || 0,
+        roadWidth: params.roadWidth,
+        surfaceAreaSqm: data.surfaceAreaSqm ?? data.nominalAreaSqm ?? 0,
+        nominalAreaSqm: data.nominalAreaSqm ?? 0,
+        centerlineCad: data.centerlineCad || [],
+      },
+      analytics: {
+        totalLengthMeters: data.totalLengthMeters || 0,
+        surfaceAreaSqm: data.surfaceAreaSqm ?? data.nominalAreaSqm ?? 0,
+        nominalAreaSqm: data.nominalAreaSqm ?? 0,
+        isGeoreferenced: false,
+        crsState: 'LOCAL_CAD_NON_GEOREFERENCED',
+        notice: data.notice,
+      },
+    }
+  }
+
   const coreFeatures = []
 
   // 1. Road Surface Polygon(s)

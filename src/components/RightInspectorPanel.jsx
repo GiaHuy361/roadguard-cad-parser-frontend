@@ -359,17 +359,18 @@ export default function RightInspectorPanel({
       </div>
 
       {/* ── Sub-navigation Tabs ── */}
-      <div className="bg-[#0B1220]/40 border-b border-[#27384E] grid grid-cols-4 shrink-0">
+      <div className="bg-[#0B1220]/60 border-b border-[#27384E] p-1 flex items-center gap-1 shrink-0">
         <button
           type="button"
           onClick={() => setActiveSubTab('metrics')}
-          className={`flex items-center justify-center gap-1.5 py-2.5 px-2 text-[12.5px] font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+          title="Khối lượng & số liệu thiết kế kỹ thuật mặt đường"
+          className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-2 px-1 rounded-md text-[12px] font-semibold transition-all cursor-pointer ${
             activeSubTab === 'metrics'
-              ? 'bg-[#17263C]/70 text-[#E8EEF6] border-b-[#22B7C9]'
-              : 'text-[#A9B9CE] hover:text-[#E8EEF6] border-b-transparent'
+              ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
+              : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
           }`}
         >
-          <span>Khối lượng</span>
+          <span className="truncate">Khối lượng</span>
           {isSurfaceAreaProvisional && (
             <span className="w-2 h-2 rounded-full bg-[#F59E0B] shrink-0" title="Cần phân tích lại mặt đường" />
           )}
@@ -378,16 +379,17 @@ export default function RightInspectorPanel({
         <button
           type="button"
           onClick={() => setActiveSubTab('layers')}
-          className={`flex items-center justify-center gap-1.5 py-2.5 px-2 text-[12.5px] font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+          title="Quản lý và hiển thị các lớp CAD/GIS"
+          className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-2 px-1 rounded-md text-[12px] font-semibold transition-all cursor-pointer ${
             activeSubTab === 'layers'
-              ? 'bg-[#17263C]/70 text-[#E8EEF6] border-b-[#22B7C9]'
-              : 'text-[#A9B9CE] hover:text-[#E8EEF6] border-b-transparent'
+              ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
+              : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
           }`}
         >
-          <span>Lớp CAD/GIS</span>
+          <span className="truncate">Lớp CAD</span>
           {activeLayerStats.length > 0 && (
-            <span className="text-[11px] font-mono text-[#22B7C9] tabular-nums">
-              ({activeLayerStats.length})
+            <span className="text-[10px] font-mono px-1 py-0.2 rounded-full bg-[#22B7C9]/15 text-[#22B7C9] tabular-nums shrink-0">
+              {activeLayerStats.length}
             </span>
           )}
         </button>
@@ -395,16 +397,17 @@ export default function RightInspectorPanel({
         <button
           type="button"
           onClick={() => setActiveSubTab('segments')}
-          className={`flex items-center justify-center gap-1.5 py-2.5 px-2 text-[12.5px] font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+          title="Phân đoạn khảo sát và theo dõi thi công"
+          className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-2 px-1 rounded-md text-[12px] font-semibold transition-all cursor-pointer ${
             activeSubTab === 'segments'
-              ? 'bg-[#17263C]/70 text-[#E8EEF6] border-b-[#22B7C9]'
-              : 'text-[#A9B9CE] hover:text-[#E8EEF6] border-b-transparent'
+              ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
+              : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
           }`}
         >
-          <span>Phân đoạn</span>
+          <span className="truncate">Phân đoạn</span>
           {dynamicSegments.length > 0 && (
-            <span className="text-[11px] font-mono text-[#39B58A] tabular-nums">
-              ({dynamicSegments.length})
+            <span className="text-[10px] font-mono px-1 py-0.2 rounded-full bg-[#39B58A]/15 text-[#39B58A] tabular-nums shrink-0">
+              {dynamicSegments.length}
             </span>
           )}
         </button>
@@ -412,14 +415,14 @@ export default function RightInspectorPanel({
         <button
           type="button"
           onClick={() => setActiveSubTab('coords')}
-          title="Chuyển đổi tọa độ hai chiều WGS-84 <-> VN-2000 & Bảng tọa độ cọc/đỉnh"
-          className={`flex items-center justify-center gap-1 py-2.5 px-1.5 text-[12px] font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+          title="Tra cứu & chuyển đổi tọa độ VN-2000 / WGS-84"
+          className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-2 px-1 rounded-md text-[12px] font-semibold transition-all cursor-pointer ${
             activeSubTab === 'coords'
-              ? 'bg-[#17263C]/70 text-[#E8EEF6] border-b-[#22B7C9]'
-              : 'text-[#A9B9CE] hover:text-[#E8EEF6] border-b-transparent'
+              ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
+              : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
           }`}
         >
-          <span>Tọa độ</span>
+          <span className="truncate">Tọa độ</span>
         </button>
       </div>
 

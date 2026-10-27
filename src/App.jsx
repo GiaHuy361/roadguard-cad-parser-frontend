@@ -100,17 +100,20 @@ export default function App() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
+  const [isCrsStale, setIsCrsStale] = useState(false)
+  const [appliedCrsConfig, setAppliedCrsConfig] = useState(null)
+
   const handleCadFileChange = useCallback((file) => {
     setRawDxfFile(file)
-    if (!file) {
-      setGeoJsonData(null)
-      setAnalyticsData(null)
-      setRoadOverlay(null)
-      setCadStats(null)
-      setCompletedSegments([])
-      setFocusedSegment(null)
-      setCustomCadFeatures([])
-    }
+    setGeoJsonData(null)
+    setAnalyticsData(null)
+    setRoadOverlay(null)
+    setCadStats(null)
+    setCompletedSegments([])
+    setFocusedSegment(null)
+    setCustomCadFeatures([])
+    setAppliedCrsConfig(null)
+    setIsCrsStale(false)
   }, [])
 
   const [activeTab, setActiveTab] = useState('map')
@@ -390,30 +393,48 @@ export default function App() {
             </button>
           </div>
 
+          {/* Stale CRS Indicator Pill in Header */}
+          {isCrsStale && (
+            <div
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#EF4444]/15 border border-[#EF4444]/40 text-[#FCA5A5] text-[11.5px] font-semibold"
+              title="Cấu hình CRS đã thay đổi so với dữ liệu đang xem. Vui lòng bấm Phân tích lại."
+            >
+              <AlertTriangle size={13} className="text-[#EF4444] shrink-0" />
+              <span>CRS chưa áp dụng</span>
+            </div>
+          )}
+
           {/* Quick Export Excel */}
           {isLive && (
             <button
               type="button"
               onClick={handleQuickExcel}
+              disabled={isSurfaceAreaProvisional || isCrsStale}
               title={
-                isSurfaceAreaProvisional
+                isCrsStale
+                  ? 'Cấu hình CRS đã thay đổi: Hãy bấm Phân Tích Lại trước khi xuất Excel'
+                  : isSurfaceAreaProvisional
                   ? 'Đang khóa xuất chính thức: Hãy bấm Phân Tích Lại sau khi đổi bề rộng B'
                   : 'Xuất báo cáo khối lượng kỹ thuật ra file Excel (.XLSX - 3 Sheets)'
               }
               aria-label={
-                isSurfaceAreaProvisional
+                isCrsStale
+                  ? 'Cấu hình CRS đã thay đổi: Hãy bấm Phân Tích Lại trước khi xuất Excel'
+                  : isSurfaceAreaProvisional
                   ? 'Đang khóa xuất chính thức: Hãy bấm Phân Tích Lại sau khi đổi bề rộng B'
                   : 'Xuất báo cáo khối lượng kỹ thuật ra file Excel (.XLSX - 3 Sheets)'
               }
-              className={`hidden md:flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-md text-[12.5px] font-semibold transition-colors border cursor-pointer whitespace-nowrap ${
-                isSurfaceAreaProvisional
-                  ? 'bg-[#F59E0B]/15 border-[#F59E0B]/50 text-[#F59E0B]'
-                  : 'bg-[#39B58A] hover:bg-[#39B58A]/90 border-[#39B58A] text-[#0B1220] font-bold'
+              className={`hidden md:flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-md text-[12.5px] font-semibold transition-colors border whitespace-nowrap ${
+                isCrsStale
+                  ? 'bg-[#EF4444]/15 border-[#EF4444]/50 text-[#FCA5A5] cursor-not-allowed opacity-75'
+                  : isSurfaceAreaProvisional
+                  ? 'bg-[#F59E0B]/15 border-[#F59E0B]/50 text-[#F59E0B] cursor-not-allowed opacity-75'
+                  : 'bg-[#39B58A] hover:bg-[#39B58A]/90 border-[#39B58A] text-[#0B1220] font-bold cursor-pointer'
               }`}
             >
               <FileSpreadsheet size={14} />
               <span className="hidden lg:inline">
-                {isSurfaceAreaProvisional ? 'Cần dựng lại B' : 'Xuất Excel'}
+                {isCrsStale ? 'CRS đổi' : isSurfaceAreaProvisional ? 'Cần dựng lại B' : 'Xuất Excel'}
               </span>
             </button>
           )}
@@ -470,6 +491,9 @@ export default function App() {
           setCollapsed={setSidebarCollapsed}
           onCustomFeaturesChange={setCustomCadFeatures}
           onInspectorBridgeChange={setInspectorBridge}
+          onSwitchTab={setActiveTab}
+          onCrsStaleChange={setIsCrsStale}
+          onAppliedCrsConfigChange={setAppliedCrsConfig}
         />
 
         {/* Column 2: Center Primary Viewport */}
@@ -825,6 +849,7 @@ export default function App() {
         roadParams={normalizedParams}
         isSurfaceAreaProvisional={isSurfaceAreaProvisional}
         analyzedRoadWidth={analyzedRoadWidth}
+        isCrsStale={isCrsStale}
       />
 
       {/* ── Toast Notifications ── */}

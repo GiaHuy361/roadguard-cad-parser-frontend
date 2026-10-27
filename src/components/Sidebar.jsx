@@ -74,6 +74,9 @@ export default function Sidebar({
   setCollapsed,
   onCustomFeaturesChange,
   onInspectorBridgeChange,
+  onSwitchTab,
+  onCrsStaleChange,
+  onAppliedCrsConfigChange,
 }) {
   const [inputMode, setInputMode] = useState('cad') // 'cad' | 'coords'
   const [lastAnalyzedSource, setLastAnalyzedSource] = useState('cad') // 'cad' | 'coords'
@@ -111,6 +114,26 @@ export default function Sidebar({
   const [selectedCm, setSelectedCm] = useState('105.75')
   const [scaleFactor, setScaleFactor] = useState('0.9999')
   const [axisOrder, setAxisOrder] = useState('AUTO')
+  const [candidateLayers, setCandidateLayers] = useState([])
+  const [appliedCrsConfig, setAppliedCrsConfig] = useState(null)
+
+  const isCrsStale = useMemo(() => {
+    if (!appliedCrsConfig) return false
+    const curCm = parseFloat(selectedCm)
+    const appCm = parseFloat(appliedCrsConfig.cm)
+    const curK0 = parseFloat(scaleFactor)
+    const appK0 = parseFloat(appliedCrsConfig.k0)
+    const cmChanged = Number.isFinite(curCm) && Number.isFinite(appCm) && Math.abs(curCm - appCm) > 1e-4
+    const k0Changed = Number.isFinite(curK0) && Number.isFinite(appK0) && Math.abs(curK0 - appK0) > 1e-4
+    const axisChanged = Boolean(appliedCrsConfig.axisOrder && axisOrder !== appliedCrsConfig.axisOrder)
+    return cmChanged || k0Changed || axisChanged
+  }, [appliedCrsConfig, selectedCm, scaleFactor, axisOrder])
+
+  useEffect(() => {
+    if (onCrsStaleChange) {
+      onCrsStaleChange(isCrsStale)
+    }
+  }, [isCrsStale, onCrsStaleChange])
 
   const handlePresetChange = (presetId) => {
     setSelectedPresetId(presetId)
@@ -119,9 +142,15 @@ export default function Sidebar({
       return
     }
     const found = VN2000_REFERENCE_PRESETS.find((p) => p.id === presetId)
-    if (found) {
-      setSelectedCm(found.cm.toFixed(2))
-      setScaleFactor(found.scaleFactor.toFixed(4))
+    if (found && found.id !== 'custom') {
+      const parsedCm = parseFloat(found.cm)
+      if (Number.isFinite(parsedCm)) {
+        setSelectedCm(parsedCm.toFixed(2))
+      }
+      const parsedK0 = parseFloat(found.k0 ?? found.scaleFactor ?? 0.9999)
+      if (Number.isFinite(parsedK0)) {
+        setScaleFactor(parsedK0.toFixed(4))
+      }
     }
   }
 
@@ -137,6 +166,8 @@ export default function Sidebar({
     setLayerGeometries({})
     setLoadingLayers({})
     setActiveCenterlineLayer(null)
+    setCandidateLayers([])
+    setAppliedCrsConfig(null)
     setCadLayerStats([])
     if (onCustomFeaturesChange) onCustomFeaturesChange([])
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -157,6 +188,8 @@ export default function Sidebar({
       if (name && (name.endsWith('.dxf') || name.endsWith('.dwg'))) {
         setFile(dropped)
         setInputMode('cad')
+        setCandidateLayers([])
+        setAppliedCrsConfig(null)
         if (onCadFileChange) onCadFileChange(dropped)
       } else {
         toast.error('Chỉ hỗ trợ file CAD (.dxf, .dwg).')
@@ -170,6 +203,8 @@ export default function Sidebar({
     if (selected) {
       setFile(selected)
       setInputMode('cad')
+      setCandidateLayers([])
+      setAppliedCrsConfig(null)
       if (onCadFileChange) onCadFileChange(selected)
     }
   }
@@ -239,6 +274,21 @@ export default function Sidebar({
           if (Array.isArray(roadData.layerStats)) {
             setCadLayerStats(roadData.layerStats)
           }
+          if (Array.isArray(roadData.candidateLayers) && roadData.candidateLayers.length > 0) {
+            setCandidateLayers(roadData.candidateLayers)
+          }
+          if (roadData.isGeoreferenced === false) {
+            toast(
+              roadData.notice ||
+                'Bản vẽ sử dụng hệ tọa độ cục bộ (Local CAD). Đã chuyển sang chế độ CAD 2D để xem hình học.',
+              { icon: 'ℹ️', duration: 4000 }
+            )
+            if (onSwitchTab) onSwitchTab('cad')
+          }
+          const applied = { cm: cmVal, k0: k0Val, axisOrder, source: 'cad' }
+          setAppliedCrsConfig(applied)
+          if (onAppliedCrsConfigChange) onAppliedCrsConfigChange(applied)
+
           const geojson = convertRoadResponseToGeoJson(roadData, normParams)
           if (geojson && onDataLoaded) {
             onDataLoaded(geojson)
@@ -780,45 +830,45 @@ export default function Sidebar({
           </div>
 
           {/* Input Mode Segmented Switcher (CAD / VN-2000 / WGS-84 GeoJSON) */}
-          <div className="grid grid-cols-3 gap-1 p-1 rounded-md bg-[#0B1220] border border-[#27384E]">
+          <div className="flex items-center gap-1 p-1 rounded-lg bg-[#0B1220] border border-[#27384E]">
             <button
               type="button"
               onClick={() => setInputMode('cad')}
-              title="Nhập bản vẽ kỹ thuật AutoCAD (.DXF)"
-              className={`py-1.5 px-1.5 rounded text-[12px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer whitespace-nowrap ${
+              title="Nhập bản vẽ kỹ thuật AutoCAD (.DXF, .DWG)"
+              className={`flex-1 min-w-0 py-1.5 px-2 rounded-md text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 inputMode === 'cad'
-                  ? 'bg-[#17263C] text-[#E8EEF6]'
-                  : 'text-[#A9B9CE] hover:text-[#E8EEF6]'
+                  ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
+                  : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
               }`}
             >
               <FileCode2 className="w-3.5 h-3.5 text-[#F06421] shrink-0" />
-              <span>CAD (.DXF)</span>
+              <span className="truncate">CAD (.DXF)</span>
             </button>
             <button
               type="button"
               onClick={() => setInputMode('coords')}
               title="Nhập danh sách tọa độ phẳng VN-2000 (X Bắc, Y Đông)"
-              className={`py-1.5 px-1.5 rounded text-[12px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer whitespace-nowrap ${
+              className={`flex-1 min-w-0 py-1.5 px-2 rounded-md text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 inputMode === 'coords'
-                  ? 'bg-[#17263C] text-[#E8EEF6]'
-                  : 'text-[#A9B9CE] hover:text-[#E8EEF6]'
+                  ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
+                  : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
               }`}
             >
               <Navigation className="w-3.5 h-3.5 text-[#22B7C9] shrink-0" />
-              <span>VN-2000</span>
+              <span className="truncate">VN-2000</span>
             </button>
             <button
               type="button"
               onClick={() => setInputMode('wgs84')}
-              title="Nhập tệp GeoJSON chuẩn RFC 7946 hoặc bảng tọa độ WGS-84 (Longitude, Latitude)"
-              className={`py-1.5 px-1.5 rounded text-[12px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer whitespace-nowrap ${
+              title="Nhập GeoJSON RFC 7946 hoặc bảng tọa độ WGS-84 (Longitude, Latitude)"
+              className={`flex-1 min-w-0 py-1.5 px-2 rounded-md text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 inputMode === 'wgs84'
-                  ? 'bg-[#17263C] text-[#E8EEF6]'
-                  : 'text-[#A9B9CE] hover:text-[#E8EEF6]'
+                  ? 'bg-[#17263C] text-[#E8EEF6] shadow-sm border border-[#2E435E]'
+                  : 'text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#111D2E]'
               }`}
             >
               <Compass className="w-3.5 h-3.5 text-[#39B58A] shrink-0" />
-              <span>WGS-84 / GeoJSON</span>
+              <span className="truncate">WGS-84</span>
             </button>
           </div>
 
@@ -873,6 +923,37 @@ export default function Sidebar({
                   >
                     <X className="w-4 h-4" />
                   </button>
+                </div>
+              )}
+
+              {/* Candidate Centerline Layer Selector */}
+              {candidateLayers.length > 0 && (
+                <div className="mt-2 space-y-1.5 p-2.5 rounded-lg border border-[#27384E] bg-[#0E1726]">
+                  <div className="flex items-center justify-between text-[12px]">
+                    <span className="font-semibold text-[#E8EEF6]">Layer tim tuyến đề xuất:</span>
+                    <span className="text-[11px] font-mono text-[#22B7C9] bg-[#22B7C9]/15 px-1.5 py-0.5 rounded">
+                      {candidateLayers.length} lớp
+                    </span>
+                  </div>
+                  <select
+                    value={
+                      activeCenterlineLayer ||
+                      candidateLayers.find((c) => c.isRecommended)?.name ||
+                      candidateLayers[0]?.name
+                    }
+                    onChange={(e) => {
+                      const lyr = e.target.value
+                      setActiveCenterlineLayer(lyr)
+                      handleSubmit(lyr)
+                    }}
+                    className="w-full px-2.5 py-2 rounded-md bg-[#0B1220] border border-[#27384E] text-[12px] text-[#E8EEF6] focus:outline-none focus:border-[#22B7C9] cursor-pointer truncate"
+                  >
+                    {candidateLayers.map((c) => (
+                      <option key={c.name} value={c.name}>
+                        {c.name} ({c.totalLengthMeters}m • {c.entityCount} đối tượng){c.isRecommended ? ' ⭐ [Đề xuất]' : ''}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
 
@@ -1115,10 +1196,18 @@ export default function Sidebar({
             <label className="block text-[12.5px] font-medium text-[#C0CEDF]">
               Tra cứu nhanh theo khu vực (Tham khảo):
             </label>
+            {isCrsStale && (
+              <div className="p-2.5 rounded-lg border border-[#F59E0B]/50 bg-[#F59E0B]/10 flex items-start gap-2 text-[12px] text-[#FDE68A] leading-snug">
+                <AlertTriangle className="w-4 h-4 text-[#F59E0B] shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-[#F59E0B]">Cấu hình CRS đã thay đổi:</strong> Kinh tuyến trục hoặc múi chiếu khác với dữ liệu hiện tại. Bấm <strong>Phân tích lại</strong> để cập nhật.
+                </div>
+              </div>
+            )}
             <select
               value={selectedPresetId}
               onChange={(e) => handlePresetChange(e.target.value)}
-              className="w-full px-3 py-2 rounded-md bg-[#0B1220] border border-[#27384E] text-[12.5px] text-[#E8EEF6] focus:outline-none focus:border-[#22B7C9] cursor-pointer"
+              className="w-full max-w-full truncate px-3 py-2 rounded-md bg-[#0B1220] border border-[#27384E] text-[12.5px] text-[#E8EEF6] focus:outline-none focus:border-[#22B7C9] cursor-pointer"
             >
               {VN2000_REFERENCE_PRESETS.map((p) => (
                 <option key={p.id} value={p.id} className="bg-[#111D2E] text-[#E8EEF6]">
