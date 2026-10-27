@@ -113,7 +113,7 @@ test('P1.3: isCrsStale correctly detects mismatch between applied and selected C
 
 // 4. Python Bridge Multi-DXF Matrix Test
 test('P1.4: Python Bridge executes multi-DXF matrix correctly across 5 files', () => {
-  const scriptPath = 'C:\\Users\\dell\\.gemini\\antigravity\\brain\\f10d1f71-6949-4bb8-9403-1c362490f761\\scratch\\test_bridge_multi.py'
+  const scriptPath = path.resolve(process.cwd(), '../roadguard-cad-parser/tests/test_multi_dxf.py')
   const pyCmd = spawnSync('python', [scriptPath], {
     encoding: 'utf-8',
     timeout: 30000

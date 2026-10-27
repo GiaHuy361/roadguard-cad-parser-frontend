@@ -38,7 +38,7 @@ export async function downloadExcelReport({ geoJsonData, analyticsData, roadPara
 
     const wb = XLSX.utils.book_new()
 
-    const cm = stats.centralMeridian ?? effectiveGeoJson?.centralMeridian ?? '105.75'
+    const cm = stats.centralMeridian ?? effectiveGeoJson?.centralMeridian ?? 'Chưa xác định'
     const k0 = stats.scaleFactor ?? effectiveGeoJson?.scaleFactor ?? 0.9999
     const zoneLabel = Math.abs(Number(k0) - 0.9996) < 1e-4 ? 'Múi chiếu 6° (k0 = 0.9996)' : 'Múi chiếu 3° (k0 = 0.9999)'
     const axisOrder = stats.axisOrder ?? effectiveGeoJson?.axisOrder ?? 'VN2000_XY'

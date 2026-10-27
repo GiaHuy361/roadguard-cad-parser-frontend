@@ -880,7 +880,7 @@ export function parseAndValidateWgs84GeoJson(inputGeoJson, options = {}) {
         if (!chk.valid) {
           return {
             success: false,
-            error: chk.swapped ? 'SwappedWgs84AxisOrder' : 'InvalidCoordinateValue',
+            errorCode: chk.swapped ? 'SwappedWgs84AxisOrder' : 'InvalidCoordinateValue',
             error: chk.error,
           }
         }
@@ -942,8 +942,8 @@ export function parseAndValidateWgs84GeoJson(inputGeoJson, options = {}) {
           if (!chk.valid) {
             return {
               success: false,
-              error: chk.swapped ? 'SwappedWgs84AxisOrder' : 'InvalidCoordinateValue',
-              error: chk.error,
+              errorCode: chk.swapped ? 'SwappedWgs84AxisOrder' : 'InvalidCoordinateValue',
+            error: chk.error,
             }
           }
           checkedPts.push(chk.coord)
@@ -997,7 +997,7 @@ export function parseAndValidateWgs84GeoJson(inputGeoJson, options = {}) {
         if (!Array.isArray(outer) || outer.length < 3) {
           return {
             success: false,
-            error: 'InvalidPolygonRing',
+            errorCode: 'InvalidPolygonRing',
             error: `Polygon tại feature #${idx + 1} có ít hơn 3 đỉnh.`,
           }
         }
@@ -1007,8 +1007,8 @@ export function parseAndValidateWgs84GeoJson(inputGeoJson, options = {}) {
           if (!chk.valid) {
             return {
               success: false,
-              error: chk.swapped ? 'SwappedWgs84AxisOrder' : 'InvalidCoordinateValue',
-              error: chk.error,
+              errorCode: chk.swapped ? 'SwappedWgs84AxisOrder' : 'InvalidCoordinateValue',
+            error: chk.error,
             }
           }
           checkedOuter.push(chk.coord)

@@ -23,6 +23,7 @@ export default function RoadGuardDraftExportModal({
   isSurfaceAreaProvisional = false,
   analyzedRoadWidth = 7.0,
   isCrsStale = false,
+  crsLifecycleState = 'VALID_APPLIED',
 }) {
   const activeCenterlineFeature = useMemo(() => {
     if (!geoJsonData?.features) return null
@@ -61,6 +62,7 @@ export default function RoadGuardDraftExportModal({
   const [stationOriginMeters, setStationOriginMeters] = useState('0')
   const [surveyWidthMeters, setSurveyWidthMeters] = useState('12')
   const [copied, setCopied] = useState(false)
+
 
   const chosenFeature =
     allLineStringFeatures[selectedFeatureIdx] || activeCenterlineFeature
@@ -136,6 +138,32 @@ export default function RoadGuardDraftExportModal({
       Number(sourceCrs)
     )
   }, [draftBuildResult, sourceCrs])
+
+  const isExportBlocked =
+    isSurfaceAreaProvisional ||
+    isCrsStale ||
+    crsLifecycleState === 'UNCONFIGURED' ||
+    crsLifecycleState === 'INVALID_CONFIG' ||
+    !contractCheck.valid
+
+  const getExportBlockedReason = () => {
+    if (crsLifecycleState === 'UNCONFIGURED') {
+      return 'Hệ quy chiếu VN-2000 chưa được xác định. Vui lòng cấu hình L₀ trước khi tạo RoadGuard Draft.'
+    }
+    if (crsLifecycleState === 'INVALID_CONFIG') {
+      return 'Tham số CRS không hợp lệ.'
+    }
+    if (isCrsStale) {
+      return 'Cấu hình CRS đã thay đổi (STALE). Hãy bấm Phân Tích Lại trước khi xuất.'
+    }
+    if (isSurfaceAreaProvisional) {
+      return `Bề rộng mặt đường đã đổi (${analyzedRoadWidth}m → ${effectiveWidth}m). Hãy cập nhật bề rộng trước khi xuất draft.`
+    }
+    if (!contractCheck.valid) {
+      return 'Dữ liệu chưa thỏa mãn hợp đồng GeometryDraftInput: ' + contractCheck.errors.join('; ')
+    }
+    return null
+  }
 
   const isSyntheticSample = useMemo(() => {
     return Boolean(
@@ -471,8 +499,8 @@ export default function RoadGuardDraftExportModal({
             <button
               type="button"
               onClick={handleCopyDraft}
-              disabled={!contractCheck.valid || isSurfaceAreaProvisional || isCrsStale}
-              title={isCrsStale ? 'Cấu hình CRS đã thay đổi. Vui lòng phân tích lại trước khi xuất.' : undefined}
+              disabled={isExportBlocked}
+              title={getExportBlockedReason() || undefined}
               className="px-3.5 py-2 rounded-md bg-[#17263C] hover:bg-[#1E314D] disabled:opacity-50 border border-[#27384E] text-[12.5px] font-semibold text-[#E8EEF6] flex items-center gap-1.5 cursor-pointer"
             >
               {copied ? <Check className="w-4 h-4 text-[#39B58A]" /> : <Copy className="w-4 h-4 text-[#22B7C9]" />}
@@ -481,8 +509,8 @@ export default function RoadGuardDraftExportModal({
             <button
               type="button"
               onClick={handleDownloadDraft}
-              disabled={!contractCheck.valid || isSurfaceAreaProvisional || isCrsStale}
-              title={isCrsStale ? 'Cấu hình CRS đã thay đổi. Vui lòng phân tích lại trước khi xuất.' : undefined}
+              disabled={isExportBlocked}
+              title={getExportBlockedReason() || undefined}
               className="px-4 py-2 rounded-md bg-[#F06421] hover:bg-[#FF7635] disabled:opacity-50 text-white text-[12.5px] font-bold flex items-center gap-1.5 cursor-pointer"
             >
               <Download className="w-4 h-4" />

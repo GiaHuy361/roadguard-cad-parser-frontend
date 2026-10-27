@@ -30,6 +30,7 @@ import {
   AlertTriangle,
   RefreshCw,
   ShieldCheck,
+  ChevronLeft,
 } from 'lucide-react'
 
 /* ─── Primary Studio Workspace Tabs ───────────────────────────── */
@@ -101,6 +102,7 @@ export default function App() {
   }, [])
 
   const [isCrsStale, setIsCrsStale] = useState(false)
+  const [crsLifecycleState, setCrsLifecycleState] = useState('VALID_APPLIED')
   const [appliedCrsConfig, setAppliedCrsConfig] = useState(null)
 
   const handleCadFileChange = useCallback((file) => {
@@ -144,6 +146,28 @@ export default function App() {
   const analyzedRoadWidth = Number(
     ssotMetrics?.analyzedRoadWidth || normalizedParams.roadWidth
   )
+
+  const isExportBlocked =
+    isSurfaceAreaProvisional ||
+    isCrsStale ||
+    crsLifecycleState === 'UNCONFIGURED' ||
+    crsLifecycleState === 'INVALID_CONFIG'
+
+  const getExportBlockedReason = () => {
+    if (crsLifecycleState === 'UNCONFIGURED') {
+      return 'Hệ quy chiếu VN-2000 chưa được cấu hình. Vui lòng chọn L₀ và phân tích trước khi xuất dữ liệu.'
+    }
+    if (crsLifecycleState === 'INVALID_CONFIG') {
+      return 'Tham số CRS không hợp lệ (L₀ phải từ 100° đến 112°). Vui lòng cấu hình lại trước khi xuất dữ liệu.'
+    }
+    if (isCrsStale) {
+      return 'Cấu hình CRS đã thay đổi (STALE). Vui lòng bấm Phân Tích Lại trước khi xuất dữ liệu.'
+    }
+    if (isSurfaceAreaProvisional) {
+      return `Bề rộng mặt đường đã đổi từ ${analyzedRoadWidth}m sang ${normalizedParams.roadWidth}m. Vui lòng bấm Cập Nhật & Dựng Lại Mặt Đường trước khi xuất dữ liệu chính thức.`
+    }
+    return null
+  }
 
   const layerVisibility = useMemo(
     () => ({
@@ -210,11 +234,9 @@ export default function App() {
 
   const handleCopyGeoJson = () => {
     if (!exportGeoJson) return
-    if (isSurfaceAreaProvisional) {
-      toast.error(
-        `Bề rộng mặt đường đã đổi từ ${analyzedRoadWidth}m sang ${normalizedParams.roadWidth}m. Vui lòng bấm "Cập Nhật & Dựng Lại Mặt Đường" trước khi sao chép dữ liệu chính thức.`,
-        { duration: 5000 }
-      )
+    const blockedReason = getExportBlockedReason()
+    if (blockedReason) {
+      toast.error(blockedReason, { duration: 5000 })
       return
     }
     const text = JSON.stringify(exportGeoJson, null, 2)
@@ -234,11 +256,9 @@ export default function App() {
 
   const handleDownloadGeoJsonFile = () => {
     if (!exportGeoJson) return
-    if (isSurfaceAreaProvisional) {
-      toast.error(
-        `Bề rộng mặt đường đã đổi từ ${analyzedRoadWidth}m sang ${normalizedParams.roadWidth}m. Vui lòng bấm "Cập Nhật & Dựng Lại Mặt Đường" trước khi xuất file GeoJSON chính thức.`,
-        { duration: 5000 }
-      )
+    const blockedReason = getExportBlockedReason()
+    if (blockedReason) {
+      toast.error(blockedReason, { duration: 5000 })
       return
     }
     const blob = new Blob([JSON.stringify(exportGeoJson, null, 2)], {
@@ -303,24 +323,36 @@ export default function App() {
     <div className="flex flex-col w-screen h-screen overflow-hidden bg-[#0B1220] text-[#E8EEF6] font-sans antialiased select-none">
       {/* ── 1. Top Studio Header (52px, Original Logo + CAD & GIS STUDIO first on left + 4 View Tabs + Essential Tools) ── */}
       <header className="h-[52px] shrink-0 bg-[#111D2E] border-b border-[#27384E] px-3.5 flex items-center justify-between gap-2 lg:gap-3 z-30">
-        {/* Left: 100% Original Hoàng Hải Logo + CAD & GIS STUDIO (First element on Header, no button before logo) */}
-        <a
-          href="/"
-          onClick={linkHandler('/')}
-          className="flex items-center gap-2.5 shrink-0 rounded focus-visible:outline-2 focus-visible:outline-[#F06421]"
-          title="CAD & GIS STUDIO — Về trang giới thiệu"
-        >
-          <div className="w-8 h-8 rounded bg-white p-0.5 flex items-center justify-center border border-[#27384E] shrink-0 overflow-hidden">
-            <img
-              src="/brand/hoang-hai-logo-original.png"
-              alt="Logo Công ty TNHH Xây dựng Bê tông Hoàng Hải"
-              className="w-full h-full object-contain"
-            />
-          </div>
-          <span className="text-[14px] font-bold text-[#E8EEF6] tracking-wider whitespace-nowrap">
-            CAD &amp; GIS STUDIO
-          </span>
-        </a>
+        {/* Left: 100% Original Hoàng Hải Logo + CAD & GIS STUDIO + Về Cửa Ngõ */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          <a
+            href="/"
+            onClick={linkHandler('/')}
+            className="flex items-center gap-2.5 shrink-0 rounded focus-visible:outline-2 focus-visible:outline-[#F06421]"
+            title="CAD & GIS STUDIO — Về trang giới thiệu"
+          >
+            <div className="w-8 h-8 rounded bg-white p-0.5 flex items-center justify-center border border-[#27384E] shrink-0 overflow-hidden">
+              <img
+                src="/brand/hoang-hai-logo-original.png"
+                alt="Logo Công ty TNHH Xây dựng Bê tông Hoàng Hải"
+                className="w-full h-full object-contain"
+              />
+            </div>
+            <span className="text-[14px] font-bold text-[#E8EEF6] tracking-wider whitespace-nowrap">
+              CAD &amp; GIS STUDIO
+            </span>
+          </a>
+
+          <a
+            href="/"
+            onClick={linkHandler('/')}
+            className="hidden sm:inline-flex items-center gap-1 px-2 py-1 rounded text-[11.5px] font-semibold text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#17263C] transition-colors border border-transparent hover:border-[#27384E]"
+            title="Quay lại Landing Page cửa ngõ phần mềm"
+          >
+            <ChevronLeft size={13} className="text-[#22B7C9]" />
+            <span>Về Cửa Ngõ</span>
+          </a>
+        </div>
 
         {/* Center: 4 Primary Workspace View Tabs */}
         <nav
@@ -493,6 +525,7 @@ export default function App() {
           onInspectorBridgeChange={setInspectorBridge}
           onSwitchTab={setActiveTab}
           onCrsStaleChange={setIsCrsStale}
+          onCrsLifecycleChange={setCrsLifecycleState}
           onAppliedCrsConfigChange={setAppliedCrsConfig}
         />
 
@@ -850,6 +883,7 @@ export default function App() {
         isSurfaceAreaProvisional={isSurfaceAreaProvisional}
         analyzedRoadWidth={analyzedRoadWidth}
         isCrsStale={isCrsStale}
+        crsLifecycleState={crsLifecycleState}
       />
 
       {/* ── Toast Notifications ── */}

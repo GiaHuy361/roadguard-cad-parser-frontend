@@ -77,6 +77,7 @@ export default function Sidebar({
   onSwitchTab,
   onCrsStaleChange,
   onAppliedCrsConfigChange,
+  onCrsLifecycleChange,
 }) {
   const [inputMode, setInputMode] = useState('cad') // 'cad' | 'coords'
   const [lastAnalyzedSource, setLastAnalyzedSource] = useState('cad') // 'cad' | 'coords'
@@ -119,15 +120,36 @@ export default function Sidebar({
 
   const isCrsStale = useMemo(() => {
     if (!appliedCrsConfig) return false
+    if (selectedPresetId === 'unconfigured') return true
     const curCm = parseFloat(selectedCm)
     const appCm = parseFloat(appliedCrsConfig.cm)
     const curK0 = parseFloat(scaleFactor)
     const appK0 = parseFloat(appliedCrsConfig.k0)
-    const cmChanged = Number.isFinite(curCm) && Number.isFinite(appCm) && Math.abs(curCm - appCm) > 1e-4
-    const k0Changed = Number.isFinite(curK0) && Number.isFinite(appK0) && Math.abs(curK0 - appK0) > 1e-4
+    const cmChanged = !Number.isFinite(curCm) || !Number.isFinite(appCm) || Math.abs(curCm - appCm) > 1e-4
+    const k0Changed = !Number.isFinite(curK0) || !Number.isFinite(appK0) || Math.abs(curK0 - appK0) > 1e-4
     const axisChanged = Boolean(appliedCrsConfig.axisOrder && axisOrder !== appliedCrsConfig.axisOrder)
     return cmChanged || k0Changed || axisChanged
-  }, [appliedCrsConfig, selectedCm, scaleFactor, axisOrder])
+  }, [appliedCrsConfig, selectedPresetId, selectedCm, scaleFactor, axisOrder])
+
+  const crsLifecycleState = useMemo(() => {
+    if (loading) return 'ANALYZING'
+    if (selectedPresetId === 'unconfigured' || !selectedCm || selectedCm.toString().trim() === '') {
+      return 'UNCONFIGURED'
+    }
+    const cmNum = parseFloat(selectedCm)
+    const k0Num = parseFloat(scaleFactor)
+    if (!Number.isFinite(cmNum) || cmNum < 100 || cmNum > 112 || !Number.isFinite(k0Num) || k0Num <= 0) {
+      return 'INVALID_CONFIG'
+    }
+    if (isCrsStale) return 'STALE'
+    return 'VALID_APPLIED'
+  }, [loading, selectedPresetId, selectedCm, scaleFactor, isCrsStale])
+
+  useEffect(() => {
+    if (onCrsLifecycleChange) {
+      onCrsLifecycleChange(crsLifecycleState)
+    }
+  }, [crsLifecycleState, onCrsLifecycleChange])
 
   useEffect(() => {
     if (onCrsStaleChange) {
@@ -226,7 +248,15 @@ export default function Sidebar({
         laneCount,
       })
       const exactRoadWidth = normParams.roadWidth
-      const cmVal = parseFloat(selectedCm) || 105.75
+      if (selectedPresetId === 'unconfigured' || !selectedCm || isNaN(parseFloat(selectedCm))) {
+        toast.error('Vui lòng chọn hệ quy chiếu VN-2000 hoặc kinh tuyến trục L₀ trước khi phân tích.')
+        return
+      }
+      const cmVal = parseFloat(selectedCm)
+      if (cmVal < 100 || cmVal > 112) {
+        toast.error('Kinh tuyến trục L₀ không hợp lệ (phải từ 100° đến 112°).')
+        return
+      }
       const k0Val = parseFloat(scaleFactor) || 0.9999
 
       setLoading(true)
@@ -276,6 +306,9 @@ export default function Sidebar({
           }
           if (Array.isArray(roadData.candidateLayers) && roadData.candidateLayers.length > 0) {
             setCandidateLayers(roadData.candidateLayers)
+          }
+          if (roadData.centerlineLayerName && !targetLayer) {
+            setActiveCenterlineLayer(roadData.centerlineLayerName)
           }
           if (roadData.isGeoreferenced === false) {
             toast(
@@ -393,7 +426,15 @@ export default function Sidebar({
         laneCount,
       })
       const exactRoadWidth = normParams.roadWidth
-      const cmVal = parseFloat(selectedCm) || 105.75
+      if (selectedPresetId === 'unconfigured' || !selectedCm || isNaN(parseFloat(selectedCm))) {
+        toast.error('Vui lòng chọn hệ quy chiếu VN-2000 hoặc kinh tuyến trục L₀ trước khi phân tích.')
+        return
+      }
+      const cmVal = parseFloat(selectedCm)
+      if (cmVal < 100 || cmVal > 112) {
+        toast.error('Kinh tuyến trục L₀ không hợp lệ (phải từ 100° đến 112°).')
+        return
+      }
       const k0Val = parseFloat(scaleFactor) || 0.9999
 
       setLoading(true)
@@ -757,6 +798,8 @@ export default function Sidebar({
         centralMeridian: selectedPresetId === 'unconfigured' ? '' : selectedCm,
         scaleFactor,
         axisOrder,
+        crsLifecycleState,
+        isCrsStale,
         sourceDataKind: lastAnalyzedSource, // 'cad' | 'coords' | 'wgs84'
         crsConfigured:
           selectedPresetId !== 'unconfigured' &&
@@ -779,6 +822,8 @@ export default function Sidebar({
     selectedCm,
     scaleFactor,
     axisOrder,
+    crsLifecycleState,
+    isCrsStale,
     lastAnalyzedSource,
     loading,
     handleToggleLayer,
@@ -1196,12 +1241,45 @@ export default function Sidebar({
             <label className="block text-[12.5px] font-medium text-[#C0CEDF]">
               Tra cứu nhanh theo khu vực (Tham khảo):
             </label>
-            {isCrsStale && (
+            {/* CRS Lifecycle Status Banner */}
+            {crsLifecycleState === 'UNCONFIGURED' ? (
               <div className="p-2.5 rounded-lg border border-[#F59E0B]/50 bg-[#F59E0B]/10 flex items-start gap-2 text-[12px] text-[#FDE68A] leading-snug">
                 <AlertTriangle className="w-4 h-4 text-[#F59E0B] shrink-0 mt-0.5" />
                 <div>
-                  <strong className="text-[#F59E0B]">Cấu hình CRS đã thay đổi:</strong> Kinh tuyến trục hoặc múi chiếu khác với dữ liệu hiện tại. Bấm <strong>Phân tích lại</strong> để cập nhật.
+                  <strong className="text-[#F59E0B] block">Chưa xác định hệ tọa độ VN-2000 (L₀)</strong>
+                  Vui lòng chọn khu vực hoặc nhập kinh tuyến trục L₀ để định vị bản vẽ và kích hoạt xuất dữ liệu.
                 </div>
+              </div>
+            ) : crsLifecycleState === 'INVALID_CONFIG' ? (
+              <div className="p-2.5 rounded-lg border border-[#EF4444]/50 bg-[#EF4444]/10 flex items-start gap-2 text-[12px] text-[#FCA5A5] leading-snug">
+                <AlertTriangle className="w-4 h-4 text-[#EF4444] shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-[#EF4444] block">Tham số CRS không hợp lệ</strong>
+                  Kinh tuyến trục L₀ phải từ 100° đến 112°. Hệ số tỉ lệ k₀ phải là số dương hợp lệ.
+                </div>
+              </div>
+            ) : crsLifecycleState === 'STALE' ? (
+              <div className="p-2.5 rounded-lg border border-[#F59E0B]/50 bg-[#F59E0B]/10 flex items-start gap-2 text-[12px] text-[#FDE68A] leading-snug">
+                <AlertTriangle className="w-4 h-4 text-[#F59E0B] shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-[#F59E0B] block">Cấu hình CRS đã thay đổi (STALE)</strong>
+                  Kinh tuyến trục L₀ hoặc múi chiếu khác với dữ liệu đang xem. Bấm <strong>Phân tích lại</strong> để cập nhật bản đồ và mở khóa xuất dữ liệu.
+                </div>
+              </div>
+            ) : crsLifecycleState === 'ANALYZING' ? (
+              <div className="p-2.5 rounded-lg border border-[#3B82F6]/50 bg-[#3B82F6]/10 flex items-center gap-2 text-[12px] text-[#93C5FD]">
+                <Loader2 className="w-4 h-4 animate-spin text-[#3B82F6] shrink-0" />
+                <span>Đang phân tích hình học &amp; chiếu tọa độ VN-2000…</span>
+              </div>
+            ) : (
+              <div className="p-2.5 rounded-lg border border-[#39B58A]/40 bg-[#39B58A]/10 flex items-center justify-between text-[12px] text-[#A7F3D0]">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-[#39B58A]" />
+                  <span>VN-2000: L₀ = {selectedCm}°, k₀ = {scaleFactor}</span>
+                </span>
+                <span className="text-[10.5px] font-mono text-[#39B58A] bg-[#39B58A]/20 px-2 py-0.5 rounded font-bold uppercase tracking-wider">
+                  ĐÃ ÁP DỤNG
+                </span>
               </div>
             )}
             <select

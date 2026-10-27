@@ -76,11 +76,13 @@ export default function RightInspectorPanel({
   onToggleAllCadLayers,
   selectedCadLayer = '',
   onSelectCadLayerForParse,
-  centralMeridian = '105.75',
+  centralMeridian = '',
   scaleFactor = '0.9999',
   axisOrder = 'AUTO',
   sourceDataKind = 'cad',
   crsConfigured = true,
+  crsLifecycleState = 'VALID_APPLIED',
+  isCrsStale = false,
   coordDisplayMode = 'DUAL',
   onCoordDisplayModeChange = null,
   onOpenRoadGuardDraftModal = null,
@@ -99,6 +101,8 @@ export default function RightInspectorPanel({
   const [layerCategory, setLayerCategory] = useState('ALL')
 
   const normalizedParams = useMemo(() => normalizeRoadParams(roadParams), [roadParams])
+
+
 
   const enrichedBundle = useMemo(() => {
     if (!geoJsonData) return null
@@ -119,6 +123,28 @@ export default function RightInspectorPanel({
     sourceDataKind === 'coords' || effectiveGeoJson?.sourceDataKind === 'VN2000_COORDS'
   const isSurfaceAreaProvisional = Boolean(stats.isSurfaceAreaProvisional)
   const analyzedRoadWidth = Number(stats.analyzedRoadWidth || normalizedParams.roadWidth)
+
+  const isExportBlocked =
+    isSurfaceAreaProvisional ||
+    isCrsStale ||
+    crsLifecycleState === 'UNCONFIGURED' ||
+    crsLifecycleState === 'INVALID_CONFIG'
+
+  const getExportBlockedReason = () => {
+    if (crsLifecycleState === 'UNCONFIGURED') {
+      return 'Hệ quy chiếu VN-2000 chưa được cấu hình. Vui lòng chọn L₀ trước khi xuất dữ liệu.'
+    }
+    if (crsLifecycleState === 'INVALID_CONFIG') {
+      return 'Tham số CRS không hợp lệ (L₀ phải từ 100° đến 112°).'
+    }
+    if (isCrsStale) {
+      return 'Cấu hình CRS đã thay đổi (STALE). Hãy bấm Phân Tích Lại trước khi xuất.'
+    }
+    if (isSurfaceAreaProvisional) {
+      return `Bề rộng mặt đường đã đổi từ ${analyzedRoadWidth}m sang ${normalizedParams.roadWidth}m. Hãy bấm Cập Nhật & Dựng Lại Mặt Đường trước khi xuất dữ liệu.`
+    }
+    return null
+  }
 
   const isSyntheticSample = useMemo(() => {
     if (!effectiveGeoJson) return false
@@ -203,7 +229,7 @@ export default function RightInspectorPanel({
         crsMetadata: effectiveGeoJson.crsMetadata || {
           sourceCrs: 'VN-2000',
           targetCrs: 'EPSG:4326 (WGS-84)',
-          centralMeridian: Number(centralMeridian) || 105.75,
+          centralMeridian: Number.isFinite(Number(centralMeridian)) && Number(centralMeridian) > 0 ? Number(centralMeridian) : null,
           scaleFactor: Number(scaleFactor) || 0.9999,
           axisOrder,
         },
