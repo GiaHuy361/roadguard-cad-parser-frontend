@@ -1,15 +1,20 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Search, X, Compass, AlertCircle } from 'lucide-react'
 import { VN2000_REFERENCE_PRESETS } from '../utils/roadEngineeringBuilder'
+import { useFloatingPortal } from './useFloatingPortal'
 
 /**
  * CrsPresetSelect
  * ==============================================================================
- * Accessible, collision-aware searchable Popover replacement for native <select>
- * Displays two-line item format:
- *   - Primary: 107°45′ — Đồng Nai, BR-VT, Đà Nẵng, Quảng Nam
- *   - Secondary: Múi 3° · L₀ = 107.75° · k₀ = 0.9999
- * Supports keyboard navigation (Esc, Arrow keys, Enter) and search filtering.
+ * Accessible, collision-aware searchable Popover replacement for native <select>.
+ * Rendered via React Portal directly into document.body to prevent clipping by
+ * scrollable ancestor containers (overflow-y-auto).
+ * Features:
+ *   - Two-line item layout (Province & angle bold / specs muted)
+ *   - Auto-flipping placement (opens upwards when cramped near viewport bottom)
+ *   - Search filtering (supports unaccented Vietnamese search)
+ *   - Full keyboard navigation (Esc, Arrow keys, Enter)
  */
 export default function CrsPresetSelect({
   selectedPresetId,
@@ -21,9 +26,13 @@ export default function CrsPresetSelect({
   const [isOpen, setIsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [highlightedIndex, setHighlightedIndex] = useState(-1)
-  const containerRef = useRef(null)
   const searchInputRef = useRef(null)
   const listRef = useRef(null)
+
+  const { triggerRef, popoverRef, coords } = useFloatingPortal({
+    isOpen,
+    onClose: () => setIsOpen(false),
+  })
 
   // Find active preset object
   const activePreset = useMemo(() => {
@@ -63,25 +72,6 @@ export default function CrsPresetSelect({
     }
   }, [isOpen])
 
-  // Click outside listener
-  useEffect(() => {
-    if (!isOpen) return
-
-    function handleClickOutside(event) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target)
-      ) {
-        setIsOpen(false)
-      }
-    }
-
-    document.addEventListener('pointerdown', handleClickOutside)
-    return () => {
-      document.removeEventListener('pointerdown', handleClickOutside)
-    }
-  }, [isOpen])
-
   // Keyboard navigation
   const handleKeyDown = (e) => {
     if (!isOpen) {
@@ -97,6 +87,7 @@ export default function CrsPresetSelect({
     if (e.key === 'Escape') {
       e.preventDefault()
       setIsOpen(false)
+      triggerRef.current?.focus()
     } else if (e.key === 'ArrowDown') {
       e.preventDefault()
       setHighlightedIndex((prev) => (prev + 1 >= totalItems ? 0 : prev + 1))
@@ -108,12 +99,15 @@ export default function CrsPresetSelect({
       if (highlightedIndex >= 0 && highlightedIndex < filteredPresets.length) {
         onSelectPreset(filteredPresets[highlightedIndex].id)
         setIsOpen(false)
+        triggerRef.current?.focus()
       } else if (highlightedIndex === filteredPresets.length) {
         onSelectPreset('custom')
         setIsOpen(false)
+        triggerRef.current?.focus()
       } else if (highlightedIndex === filteredPresets.length + 1) {
         onSelectPreset('unconfigured')
         setIsOpen(false)
+        triggerRef.current?.focus()
       }
     }
   }
@@ -137,8 +131,6 @@ export default function CrsPresetSelect({
       }
     }
     if (activePreset) {
-      // Extract province and angle from label
-      // E.g.: "107°45' (107.75°) – Đồng Nai, BR-VT, Đà Nẵng, Quảng Nam (Múi 3°)"
       const parts = activePreset.label.split('–')
       const angle = parts[0]?.trim() || `${activePreset.cm}°`
       const provinces = parts[1]?.replace(/\(Múi.*?\)/, '').trim() || ''
@@ -158,13 +150,10 @@ export default function CrsPresetSelect({
   }, [selectedPresetId, activePreset, selectedCm, scaleFactor])
 
   return (
-    <div
-      ref={containerRef}
-      className="relative w-full text-left"
-      onKeyDown={handleKeyDown}
-    >
+    <div className="relative w-full text-left" onKeyDown={handleKeyDown}>
       {/* Trigger Button */}
       <button
+        ref={triggerRef}
         type="button"
         disabled={disabled}
         onClick={() => setIsOpen((prev) => !prev)}
@@ -202,151 +191,165 @@ export default function CrsPresetSelect({
         </div>
       </button>
 
-      {/* Floating Popover Panel */}
-      {isOpen && (
-        <div
-          role="listbox"
-          tabIndex={-1}
-          className="absolute z-50 left-0 right-0 top-full mt-1.5 rounded-xl bg-[#0E1726] border border-[#27384E] shadow-2xl shadow-black/70 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100"
-          style={{ maxHeight: '20rem' }}
-        >
-          {/* Top Search Input */}
-          <div className="p-2 border-b border-[#27384E] bg-[#111D2E]/90 shrink-0">
-            <div className="relative flex items-center">
-              <Search className="w-3.5 h-3.5 text-[#8FA3BA] absolute left-2.5 pointer-events-none" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Tìm tỉnh thành hoặc kinh tuyến trục L₀..."
-                className="w-full pl-8 pr-7 py-1.5 rounded-md bg-[#0B1220] border border-[#27384E] text-[12px] text-[#E8EEF6] placeholder-[#7E92AA] focus:outline-none focus:border-[#22B7C9]"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-2 p-0.5 text-[#8FA3BA] hover:text-[#E8EEF6] cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Preset Options List */}
+      {/* Floating Popover Panel via React Portal */}
+      {isOpen &&
+        createPortal(
           <div
-            ref={listRef}
-            className="flex-1 overflow-y-auto divide-y divide-[#17263C] overscroll-contain"
+            ref={popoverRef}
+            role="listbox"
+            tabIndex={-1}
+            onKeyDown={handleKeyDown}
+            style={{
+              position: 'fixed',
+              top: `${coords.top}px`,
+              left: `${coords.left}px`,
+              width: `${coords.width}px`,
+              maxHeight: `${coords.maxHeight}px`,
+              zIndex: 9999,
+            }}
+            className="rounded-xl bg-[#0E1726] border border-[#27384E] shadow-2xl shadow-black/90 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100"
           >
-            {filteredPresets.map((preset, idx) => {
-              const isSelected = selectedPresetId === preset.id
-              const isHighlighted = highlightedIndex === idx
-              const parts = preset.label.split('–')
-              const angle = parts[0]?.trim() || `${preset.cm}°`
-              const provinces = parts[1]?.replace(/\(Múi.*?\)/, '').trim() || ''
+            {/* Top Search Input */}
+            <div className="p-2 border-b border-[#27384E] bg-[#111D2E]/90 shrink-0">
+              <div className="relative flex items-center">
+                <Search className="w-3.5 h-3.5 text-[#8FA3BA] absolute left-2.5 pointer-events-none" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Tìm tỉnh thành hoặc kinh tuyến trục L₀..."
+                  className="w-full pl-8 pr-7 py-1.5 rounded-md bg-[#0B1220] border border-[#27384E] text-[12px] text-[#E8EEF6] placeholder-[#7E92AA] focus:outline-none focus:border-[#22B7C9]"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 p-0.5 text-[#8FA3BA] hover:text-[#E8EEF6] cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
 
-              return (
-                <div
-                  key={preset.id}
-                  role="option"
-                  aria-selected={isSelected}
-                  onClick={() => {
-                    onSelectPreset(preset.id)
-                    setIsOpen(false)
-                  }}
-                  className={`p-2.5 flex items-center justify-between gap-2.5 cursor-pointer transition-colors ${
-                    isSelected
-                      ? 'bg-[#17263C] border-l-2 border-l-[#22B7C9]'
-                      : isHighlighted
-                      ? 'bg-[#142033]'
-                      : 'hover:bg-[#111D2E]'
-                  }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[12px] font-bold text-[#E8EEF6] truncate">
-                      {angle} — {provinces}
+            {/* Preset Options List */}
+            <div
+              ref={listRef}
+              className="flex-1 overflow-y-auto divide-y divide-[#17263C] overscroll-contain"
+            >
+              {filteredPresets.map((preset, idx) => {
+                const isSelected = selectedPresetId === preset.id
+                const isHighlighted = highlightedIndex === idx
+                const parts = preset.label.split('–')
+                const angle = parts[0]?.trim() || `${preset.cm}°`
+                const provinces = parts[1]?.replace(/\(Múi.*?\)/, '').trim() || ''
+
+                return (
+                  <div
+                    key={preset.id}
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => {
+                      onSelectPreset(preset.id)
+                      setIsOpen(false)
+                      triggerRef.current?.focus()
+                    }}
+                    className={`p-2.5 flex items-center justify-between gap-2.5 cursor-pointer transition-colors ${
+                      isSelected
+                        ? 'bg-[#17263C] border-l-2 border-l-[#22B7C9]'
+                        : isHighlighted
+                        ? 'bg-[#142033]'
+                        : 'hover:bg-[#111D2E]'
+                    }`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[12px] font-bold text-[#E8EEF6] truncate">
+                        {angle} — {provinces}
+                      </div>
+                      <div className="text-[10.5px] font-mono text-[#8FA3BA] mt-0.5 flex items-center gap-1.5">
+                        <span>Múi {preset.zone === '6deg' ? '6°' : '3°'}</span>
+                        <span>•</span>
+                        <span>L₀ = {preset.cm}°</span>
+                        <span>•</span>
+                        <span>k₀ = {preset.k0 ?? 0.9999}</span>
+                      </div>
                     </div>
-                    <div className="text-[10.5px] font-mono text-[#8FA3BA] mt-0.5 flex items-center gap-1.5">
-                      <span>Múi {preset.zone === '6deg' ? '6°' : '3°'}</span>
-                      <span>•</span>
-                      <span>L₀ = {preset.cm}°</span>
-                      <span>•</span>
-                      <span>k₀ = {preset.k0 ?? 0.9999}</span>
-                    </div>
+
+                    {isSelected && (
+                      <Check className="w-4 h-4 text-[#22B7C9] shrink-0" />
+                    )}
                   </div>
+                )
+              })}
 
-                  {isSelected && (
-                    <Check className="w-4 h-4 text-[#22B7C9] shrink-0" />
-                  )}
+              {filteredPresets.length === 0 && (
+                <div className="p-4 text-center text-[12px] text-[#8FA3BA]">
+                  Không tìm thấy tỉnh thành hoặc kinh tuyến trục phù hợp.
                 </div>
-              )
-            })}
-
-            {filteredPresets.length === 0 && (
-              <div className="p-4 text-center text-[12px] text-[#8FA3BA]">
-                Không tìm thấy tỉnh thành hoặc kinh tuyến trục phù hợp.
-              </div>
-            )}
-
-            {/* Special Option: Custom L0 */}
-            <div
-              role="option"
-              aria-selected={selectedPresetId === 'custom'}
-              onClick={() => {
-                onSelectPreset('custom')
-                setIsOpen(false)
-              }}
-              className={`p-2.5 flex items-center justify-between gap-2.5 cursor-pointer transition-colors bg-[#111D2E]/40 ${
-                selectedPresetId === 'custom'
-                  ? 'bg-[#17263C] border-l-2 border-l-[#F06421]'
-                  : 'hover:bg-[#142033]'
-              }`}
-            >
-              <div className="flex-1 min-w-0">
-                <div className="text-[12px] font-bold text-[#F06421] truncate flex items-center gap-1.5">
-                  <Compass className="w-3.5 h-3.5 shrink-0" />
-                  <span>Tùy chỉnh L₀ &amp; múi chiếu (Hồ sơ thiết kế riêng)</span>
-                </div>
-                <div className="text-[10.5px] text-[#8FA3BA] mt-0.5">
-                  Nhập kinh tuyến trục L₀ và chọn múi 3°/6° trực tiếp bằng tay
-                </div>
-              </div>
-              {selectedPresetId === 'custom' && (
-                <Check className="w-4 h-4 text-[#F06421] shrink-0" />
               )}
-            </div>
 
-            {/* Special Option: Unconfigured VN-2000 */}
-            <div
-              role="option"
-              aria-selected={selectedPresetId === 'unconfigured'}
-              onClick={() => {
-                onSelectPreset('unconfigured')
-                setIsOpen(false)
-              }}
-              className={`p-2.5 flex items-center justify-between gap-2.5 cursor-pointer transition-colors bg-[#111D2E]/20 ${
-                selectedPresetId === 'unconfigured'
-                  ? 'bg-[#17263C] border-l-2 border-l-[#F59E0B]'
-                  : 'hover:bg-[#142033]'
-              }`}
-            >
-              <div className="flex-1 min-w-0">
-                <div className="text-[12px] font-bold text-[#F59E0B] truncate flex items-center gap-1.5">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                  <span>Chưa cấu hình VN-2000 (Chỉ dùng WGS-84)</span>
+              {/* Special Option: Custom L0 */}
+              <div
+                role="option"
+                aria-selected={selectedPresetId === 'custom'}
+                onClick={() => {
+                  onSelectPreset('custom')
+                  setIsOpen(false)
+                  triggerRef.current?.focus()
+                }}
+                className={`p-2.5 flex items-center justify-between gap-2.5 cursor-pointer transition-colors bg-[#111D2E]/40 ${
+                  selectedPresetId === 'custom'
+                    ? 'bg-[#17263C] border-l-2 border-l-[#F06421]'
+                    : 'hover:bg-[#142033]'
+                }`}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="text-[12px] font-bold text-[#F06421] truncate flex items-center gap-1.5">
+                    <Compass className="w-3.5 h-3.5 shrink-0" />
+                    <span>Tùy chỉnh L₀ &amp; múi chiếu (Hồ sơ thiết kế riêng)</span>
+                  </div>
+                  <div className="text-[10.5px] text-[#8FA3BA] mt-0.5">
+                    Nhập kinh tuyến trục L₀ và chọn múi 3°/6° trực tiếp bằng tay
+                  </div>
                 </div>
-                <div className="text-[10.5px] text-[#8FA3BA] mt-0.5">
-                  Khóa chuyển đổi và xuất file VN-2000 cho đến khi L₀ được áp dụng
-                </div>
+                {selectedPresetId === 'custom' && (
+                  <Check className="w-4 h-4 text-[#F06421] shrink-0" />
+                )}
               </div>
-              {selectedPresetId === 'unconfigured' && (
-                <Check className="w-4 h-4 text-[#F59E0B] shrink-0" />
-              )}
+
+              {/* Special Option: Unconfigured VN-2000 */}
+              <div
+                role="option"
+                aria-selected={selectedPresetId === 'unconfigured'}
+                onClick={() => {
+                  onSelectPreset('unconfigured')
+                  setIsOpen(false)
+                  triggerRef.current?.focus()
+                }}
+                className={`p-2.5 flex items-center justify-between gap-2.5 cursor-pointer transition-colors bg-[#111D2E]/20 ${
+                  selectedPresetId === 'unconfigured'
+                    ? 'bg-[#17263C] border-l-2 border-l-[#F59E0B]'
+                    : 'hover:bg-[#142033]'
+                }`}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="text-[12px] font-bold text-[#F59E0B] truncate flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>Chưa cấu hình VN-2000 (Chỉ dùng WGS-84)</span>
+                  </div>
+                  <div className="text-[10.5px] text-[#8FA3BA] mt-0.5">
+                    Khóa chuyển đổi và xuất file VN-2000 cho đến khi L₀ được áp dụng
+                  </div>
+                </div>
+                {selectedPresetId === 'unconfigured' && (
+                  <Check className="w-4 h-4 text-[#F59E0B] shrink-0" />
+                )}
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </div>
   )
 }

@@ -140,6 +140,7 @@ export default function RoadGuardDraftExportModal({
   }, [draftBuildResult, sourceCrs])
 
   const isExportBlocked =
+    crsLifecycleState === 'ANALYZING' ||
     isSurfaceAreaProvisional ||
     isCrsStale ||
     crsLifecycleState === 'UNCONFIGURED' ||
@@ -147,6 +148,9 @@ export default function RoadGuardDraftExportModal({
     !contractCheck.valid
 
   const getExportBlockedReason = () => {
+    if (crsLifecycleState === 'ANALYZING') {
+      return 'Hệ thống đang phân tích bản vẽ CAD. Không thể xuất RoadGuard Draft trong lúc phân tích.'
+    }
     if (crsLifecycleState === 'UNCONFIGURED') {
       return 'Hệ quy chiếu VN-2000 chưa được xác định. Vui lòng cấu hình L₀ trước khi tạo RoadGuard Draft.'
     }

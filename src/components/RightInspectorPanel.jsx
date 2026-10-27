@@ -125,6 +125,9 @@ export default function RightInspectorPanel({
   const analyzedRoadWidth = Number(stats.analyzedRoadWidth || normalizedParams.roadWidth)
 
   const getExportBlockedReason = (targetFormat = 'all') => {
+    if (crsLifecycleState === 'ANALYZING') {
+      return 'Hệ thống đang phân tích dữ liệu hình học. Vui lòng chờ quá trình hoàn tất trước khi xuất.'
+    }
     if (isSurfaceAreaProvisional) {
       return `Bề rộng mặt đường đã đổi từ ${analyzedRoadWidth}m sang ${normalizedParams.roadWidth}m. Hãy bấm Cập Nhật & Dựng Lại Mặt Đường trước khi xuất dữ liệu chính thức.`
     }
@@ -229,8 +232,8 @@ export default function RightInspectorPanel({
         crsMetadata: effectiveGeoJson.crsMetadata || {
           sourceCrs: 'VN-2000',
           targetCrs: 'EPSG:4326 (WGS-84)',
-          centralMeridian: Number.isFinite(Number(centralMeridian)) && Number(centralMeridian) > 0 ? Number(centralMeridian) : null,
-          scaleFactor: Number(scaleFactor) || 0.9999,
+          centralMeridian: Number.isFinite(Number(centralMeridian)) && Number(centralMeridian) >= 100 && Number(centralMeridian) <= 112 ? Number(centralMeridian) : null,
+          scaleFactor: Number.isFinite(Number(scaleFactor)) && Number(scaleFactor) >= 0.9 && Number(scaleFactor) <= 1.1 ? Number(scaleFactor) : null,
           axisOrder,
         },
         engineeringMetrics: stats,
@@ -266,24 +269,30 @@ export default function RightInspectorPanel({
     })
   }
 
+  const validScaleFactor = useMemo(() => {
+    const raw = Number(scaleFactor)
+    return Number.isFinite(raw) && raw >= 0.9000 && raw <= 1.1000 ? raw : null
+  }, [scaleFactor])
+
   const isVn2000Ready =
     crsConfigured !== false &&
     Boolean(centralMeridian) &&
     Number.isFinite(Number(centralMeridian)) &&
     Number(centralMeridian) >= 100 &&
-    Number(centralMeridian) <= 112
+    Number(centralMeridian) <= 112 &&
+    validScaleFactor !== null
 
   const liveConversionResult = useMemo(() => {
-    if (!isVn2000Ready) {
+    if (!isVn2000Ready || validScaleFactor === null) {
       return {
         valid: false,
         error:
-          'Chưa cấu hình hệ quy chiếu VN-2000 (cần kinh tuyến trục L₀ & múi chiếu).',
+          'Chưa cấu hình hệ quy chiếu VN-2000 hợp lệ (cần L₀ 100-112° và múi chiếu k₀ hợp lệ).',
       }
     }
     const cfg = {
       centralMeridian: Number(centralMeridian),
-      scaleFactor: Number(scaleFactor) || 0.9999,
+      scaleFactor: validScaleFactor,
     }
     if (convDirection === 'WGS84_TO_VN2000') {
       return wgs84ToVn2000(Number(convLon), Number(convLat), cfg)
@@ -302,10 +311,10 @@ export default function RightInspectorPanel({
 
   const coordinateScheduleRows = useMemo(() => {
     if (!effectiveGeoJson?.features) return []
-    const cfg = isVn2000Ready
+    const cfg = isVn2000Ready && validScaleFactor !== null
       ? {
           centralMeridian: Number(centralMeridian),
-          scaleFactor: Number(scaleFactor) || 0.9999,
+          scaleFactor: validScaleFactor,
         }
       : null
 

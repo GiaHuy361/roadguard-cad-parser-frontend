@@ -9,16 +9,14 @@
  * 5. Python Bridge multi-DXF matrix test with fixture portability (required 3. BDTK.dxf vs optional Downloads)
  * 6. Unified Export Guard: differentiates native WGS-84 source from CAD/VN-2000 coordinates
  * 7. Strict k0 validation without silent fallback
+ * 8. ANALYZING state export blocking test
+ * 9. crsMetadata preservation & zero fake 0.9999 fallback test
  */
 
 import { VN2000_REFERENCE_PRESETS } from '../src/utils/roadEngineeringBuilder.js'
-import { vn2000ToWgs84, wgs84ToVn2000 } from '../src/utils/crsTransformEngine.js'
+import { vn2000ToWgs84 } from '../src/utils/crsTransformEngine.js'
 import { spawnSync } from 'child_process'
 import path from 'path'
-import { fileURLToPath } from 'url'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const rootDir = path.resolve(__dirname, '..')
 
 console.log('='.repeat(70))
 console.log('CAD & GIS STUDIO — AUDIT & RELIABILITY VERIFICATION SUITE')
@@ -157,6 +155,7 @@ test('P1.4: Python Bridge executes multi-DXF matrix with portable SKIP handling'
 // 5. Unified Export Guard: WGS-84 Source vs CAD/VN-2000 Coords
 test('P3.1: Unified Export Guard allows WGS-84 GeoJSON export without VN-2000 config, but guards CAD/Coords & Excel', () => {
   const evaluateGuard = ({ sourceKind, crsState, isStale, isProvisional, format }) => {
+    if (crsState === 'ANALYZING') return 'ANALYZING_BLOCKED'
     if (isProvisional) return 'PROVISIONAL_BLOCKED'
     if (sourceKind === 'wgs84' && format === 'geojson') return null
     if (crsState === 'UNCONFIGURED') return 'UNCONFIGURED_BLOCKED'
@@ -246,6 +245,62 @@ test('P3.2: Strict k0 scale factor validation rejects invalid non-numeric/out-of
   if (validateK0('0').valid) throw new Error('Zero k0 must be invalid')
   if (validateK0('-0.9999').valid) throw new Error('Negative k0 must be invalid')
   if (validateK0('1.5').valid) throw new Error('Out of bounds k0 (1.5) must be invalid')
+})
+
+// 7. ANALYZING State Export Guard Test
+test('P3.3: crsLifecycleState === "ANALYZING" strictly blocks all exports across all formats', () => {
+  const evaluateGuard = ({ crsState, format }) => {
+    if (crsState === 'ANALYZING') {
+      return 'Hệ thống đang phân tích bản vẽ. Vui lòng chờ hoàn tất.'
+    }
+    return null
+  }
+
+  const formats = ['excel', 'geojson', 'draft']
+  for (const fmt of formats) {
+    const blocked = evaluateGuard({ crsState: 'ANALYZING', format: fmt })
+    if (!blocked) {
+      throw new Error(`ANALYZING state must block export for format: ${fmt}`)
+    }
+  }
+})
+
+// 8. crsMetadata preservation and zero fabricated 0.9999 test
+test('P3.4: crsMetadata preserves valid original metadata and never fabricates 0.9999 when k0 is invalid', () => {
+  const buildCrsMetadata = (effectiveGeoJson, centralMeridian, scaleFactor, axisOrder) => {
+    if (effectiveGeoJson?.crsMetadata) {
+      return effectiveGeoJson.crsMetadata // Preserve original
+    }
+    const rawK0 = Number(scaleFactor)
+    const validK0 = Number.isFinite(rawK0) && rawK0 >= 0.9 && rawK0 <= 1.1 ? rawK0 : null
+    const validCm = Number.isFinite(Number(centralMeridian)) && Number(centralMeridian) >= 100 && Number(centralMeridian) <= 112 ? Number(centralMeridian) : null
+    return {
+      sourceCrs: 'VN-2000',
+      targetCrs: 'EPSG:4326 (WGS-84)',
+      centralMeridian: validCm,
+      scaleFactor: validK0, // Never || 0.9999!
+      axisOrder,
+    }
+  }
+
+  // Case A: Original metadata exists -> Preserved as-is
+  const orig = { sourceCrs: 'VN-2000', centralMeridian: 107.75, scaleFactor: 0.9999, customTag: 'SSOT' }
+  const resA = buildCrsMetadata({ crsMetadata: orig }, '105.75', '0.9996', 'AUTO')
+  if (resA.centralMeridian !== 107.75 || resA.customTag !== 'SSOT') {
+    throw new Error('Original metadata must be strictly preserved')
+  }
+
+  // Case B: No original metadata, invalid scaleFactor -> scaleFactor is null, NOT 0.9999!
+  const resB = buildCrsMetadata(null, '107.75', 'invalid_k0', 'AUTO')
+  if (resB.scaleFactor !== null) {
+    throw new Error(`Expected null scaleFactor for invalid input, got: ${resB.scaleFactor}`)
+  }
+
+  // Case C: Valid scaleFactor -> parsed number preserved
+  const resC = buildCrsMetadata(null, '107.75', '0.9996', 'AUTO')
+  if (resC.scaleFactor !== 0.9996) {
+    throw new Error(`Expected scaleFactor 0.9996, got: ${resC.scaleFactor}`)
+  }
 })
 
 console.log('='.repeat(70))

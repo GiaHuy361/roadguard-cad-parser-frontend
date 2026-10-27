@@ -152,6 +152,9 @@ export default function App() {
     exportGeoJson?.sourceDataKind === 'WGS84_IMPORT'
 
   const getExportBlockedReason = (targetFormat = 'all') => {
+    if (crsLifecycleState === 'ANALYZING') {
+      return 'Hệ thống đang phân tích bản vẽ CAD. Vui lòng chờ quá trình hoàn tất trước khi xuất dữ liệu.'
+    }
     if (isSurfaceAreaProvisional) {
       return `Bề rộng mặt đường đã đổi từ ${analyzedRoadWidth}m sang ${normalizedParams.roadWidth}m. Vui lòng bấm Cập Nhật & Dựng Lại Mặt Đường trước khi xuất dữ liệu chính thức.`
     }
