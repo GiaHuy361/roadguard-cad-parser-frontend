@@ -110,19 +110,35 @@ export default function CrsPresetSelect({
   // Keyboard navigation inside popover listbox (strictly 1-step across [role="option"] items)
   const handlePopoverKeyDown = (e) => {
     const totalItems = visiblePresets.length + 2 // + custom + unconfigured
+    const focusedButton = e.target instanceof Element ? e.target.closest('button') : null
 
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
       setIsOpen(false)
       triggerRef.current?.focus()
-    } else if (e.key === 'ArrowDown') {
+      return
+    }
+
+    // Allow focused buttons inside the popup (Hành chính / Địa chính / Clear search)
+    // to receive native keyboard activation (Enter / Space) without selecting a highlighted option.
+    if (focusedButton && (e.key === 'Enter' || e.key === ' ')) {
+      return
+    }
+
+    if (e.key === 'ArrowDown') {
       e.preventDefault()
       e.stopPropagation()
+      if (focusedButton) {
+        searchInputRef.current?.focus()
+      }
       setHighlightedIndex((prev) => (prev + 1 >= totalItems ? 0 : prev + 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       e.stopPropagation()
+      if (focusedButton) {
+        searchInputRef.current?.focus()
+      }
       setHighlightedIndex((prev) => (prev - 1 < 0 ? totalItems - 1 : prev - 1))
     } else if (e.key === 'Enter') {
       e.preventDefault()
@@ -143,10 +159,12 @@ export default function CrsPresetSelect({
     }
   }
 
-  const handleSwitchLookupTable = (nextTable) => {
+  const handleSwitchLookupTable = (nextTable, e) => {
     setLookupTable(nextTable)
     setHighlightedIndex(-1)
-    searchInputRef.current?.focus()
+    if (e?.detail > 0) {
+      searchInputRef.current?.focus()
+    }
   }
 
   // Format label for display on the trigger button
@@ -259,7 +277,7 @@ export default function CrsPresetSelect({
                   type="button"
                   data-table-tab="administrative"
                   aria-pressed={lookupTable === 'administrative'}
-                  onClick={() => handleSwitchLookupTable('administrative')}
+                  onClick={(e) => handleSwitchLookupTable('administrative', e)}
                   className={`py-1 px-2 rounded-md text-[11px] font-semibold transition-colors cursor-pointer flex items-center justify-center gap-1 ${
                     lookupTable === 'administrative'
                       ? 'bg-[#17263C] text-[#22B7C9] border border-[#22B7C9]/40'
@@ -273,7 +291,7 @@ export default function CrsPresetSelect({
                   type="button"
                   data-table-tab="cadastral"
                   aria-pressed={lookupTable === 'cadastral'}
-                  onClick={() => handleSwitchLookupTable('cadastral')}
+                  onClick={(e) => handleSwitchLookupTable('cadastral', e)}
                   className={`py-1 px-2 rounded-md text-[11px] font-semibold transition-colors cursor-pointer flex items-center justify-center gap-1 ${
                     lookupTable === 'cadastral'
                       ? 'bg-[#17263C] text-[#39B58A] border border-[#39B58A]/40'
