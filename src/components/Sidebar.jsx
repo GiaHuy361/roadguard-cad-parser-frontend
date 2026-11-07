@@ -27,6 +27,8 @@ import {
   convertRoadResponseToGeoJson,
   enrichGeoJsonWithEngineeringFeatures,
   normalizeRoadParams,
+  buildAnalyticsFromRoadResponse,
+  shouldFallbackToParseDxf,
 } from '../utils/roadEngineeringBuilder'
 import {
   parseWgs84CoordinateText,
@@ -336,41 +338,44 @@ export default function Sidebar({
           roadFd.append('CenterlineLayerName', targetLayer)
         }
 
-        const parseFd = new FormData()
-        parseFd.append('file', file)
-        parseFd.append('targetSrid', '4326')
-        parseFd.append('tessellationSegments', '72')
-        parseFd.append('centralMeridian', cmVal.toString())
-        parseFd.append('scaleFactor', k0Val.toString())
-        parseFd.append('axisOrder', axisOrder)
-        parseFd.append('SegmentLength', normParams.segmentLength.toString())
-        parseFd.append('RoadWidth', exactRoadWidth.toString())
-        parseFd.append('SlabLength', normParams.slabLength.toString())
-        if (targetLayer) {
-          parseFd.append('centerlineLayerName', targetLayer)
+        const tStart =
+          typeof performance !== 'undefined' ? performance.now() : Date.now()
+        let roadRes = null
+        let roadErr = null
+        try {
+          roadRes = await axios.post(`${API_BASE}/api/cad/parse-road`, roadFd, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+            signal: controller.signal,
+          })
+        } catch (err) {
+          roadErr = err
         }
 
-        const [roadResult, parseResult] = await Promise.allSettled([
-          axios.post(`${API_BASE}/api/cad/parse-road`, roadFd, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-            signal: controller.signal,
-          }),
-          axios.post(`${API_BASE}/api/cad/parse-dxf`, parseFd, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-            signal: controller.signal,
-          }),
-        ])
+        const isStaleAfterRoad = currentReqId !== activeRequestIdRef.current
+        const isCanceledAfterRoad =
+          controller.signal.aborted ||
+          axios.isCancel?.(roadErr) ||
+          roadErr?.name === 'CanceledError' ||
+          roadErr?.code === 'ERR_CANCELED'
 
-        if (currentReqId !== activeRequestIdRef.current) {
-          // Stale response discarded: a newer analysis or file selection occurred
-          toast.dismiss(tid)
+        if (isStaleAfterRoad || isCanceledAfterRoad) {
+          if (isStaleAfterRoad) {
+            toast.dismiss(tid)
+          }
           return
         }
 
         let loadedSomething = false
+        const roadData = roadRes?.data ?? null
 
-        if (roadResult.status === 'fulfilled' && roadResult.value?.data?.success) {
-          const roadData = roadResult.value.data
+        if (roadData?.success) {
+          const elapsedRoadMs = Math.max(
+            1,
+            Math.round(
+              (typeof performance !== 'undefined' ? performance.now() : Date.now()) -
+                tStart
+            )
+          )
           if (Array.isArray(roadData.layerStats)) {
             setCadLayerStats(roadData.layerStats)
           }
@@ -408,58 +413,114 @@ export default function Sidebar({
             setLastAnalyzedSource('cad')
             loadedSomething = true
           }
-        }
-
-        if (parseResult.status === 'fulfilled' && parseResult.value?.data) {
-          const pData = parseResult.value.data
-          const analytics = pData?.analytics ?? null
-          const featureCollection = pData?.featureCollection ?? pData
-
-          if (analytics && onAnalyticsLoaded) {
-            if (
-              roadResult.status === 'fulfilled' &&
-              roadResult.value?.data?.totalLengthMeters
-            ) {
-              const rData = roadResult.value.data
-              analytics.totalLengthMeters = rData.totalLengthMeters
-              analytics.nominalAreaSqm = Number(
-                (rData.totalLengthMeters * exactRoadWidth).toFixed(2)
+          if (onAnalyticsLoaded) {
+            onAnalyticsLoaded(
+              buildAnalyticsFromRoadResponse(
+                roadData,
+                normParams,
+                geojson,
+                elapsedRoadMs
               )
-              analytics.surfaceAreaSqm =
-                rData.surfaceAreaSqm ?? analytics.nominalAreaSqm
-              analytics.totalAreaSqm = analytics.nominalAreaSqm
-              analytics.roadSegments = Math.ceil(
-                rData.totalLengthMeters / normParams.segmentLength
-              )
-              analytics.longitudinalSlabs = Math.floor(
-                rData.totalLengthMeters / normParams.slabLength
-              )
-              analytics.estimatedConcreteSlabs =
-                analytics.longitudinalSlabs * normParams.laneCount
-            }
-            onAnalyticsLoaded(analytics)
+            )
+          }
+        } else {
+          const errBody = roadErr?.response?.data ?? roadData ?? null
+          if (
+            errBody?.error === 'AmbiguousAxisOrder' ||
+            errBody?.requiresAxisConfirmation
+          ) {
+            setAxisAmbiguityAlert(
+              errBody.detail ||
+                'Tọa độ nằm trong vùng giao thoa X/Y. Vui lòng chọn rõ thứ tự trục.'
+            )
+            toast.error('Cần xác nhận quy ước trục tọa độ X/Y!', { id: tid })
+            return
           }
 
-          if (!loadedSomething && featureCollection && onDataLoaded) {
-            onDataLoaded(featureCollection)
-            setLastAnalyzedSource('cad')
-            loadedSomething = true
+          let parseFallbackErr = null
+          if (
+            shouldFallbackToParseDxf({
+              roadData,
+              roadError: roadErr,
+              isCanceled: controller.signal.aborted,
+              isStale: currentReqId !== activeRequestIdRef.current,
+            })
+          ) {
+            const parseFd = new FormData()
+            parseFd.append('file', file)
+            parseFd.append('targetSrid', '4326')
+            parseFd.append('tessellationSegments', '72')
+            parseFd.append('centralMeridian', cmVal.toString())
+            parseFd.append('scaleFactor', k0Val.toString())
+            parseFd.append('axisOrder', axisOrder)
+            parseFd.append('SegmentLength', normParams.segmentLength.toString())
+            parseFd.append('RoadWidth', exactRoadWidth.toString())
+            parseFd.append('SlabLength', normParams.slabLength.toString())
+            if (targetLayer) {
+              parseFd.append('centerlineLayerName', targetLayer)
+            }
+
+            try {
+              const parseRes = await axios.post(
+                `${API_BASE}/api/cad/parse-dxf`,
+                parseFd,
+                {
+                  headers: { 'Content-Type': 'multipart/form-data' },
+                  signal: controller.signal,
+                }
+              )
+              if (
+                currentReqId !== activeRequestIdRef.current ||
+                controller.signal.aborted
+              ) {
+                if (currentReqId !== activeRequestIdRef.current) {
+                  toast.dismiss(tid)
+                }
+                return
+              }
+
+              const pData = parseRes?.data
+              const analytics = pData?.analytics ?? null
+              const featureCollection = pData?.featureCollection ?? pData
+              if (analytics && onAnalyticsLoaded) {
+                onAnalyticsLoaded(analytics)
+              }
+              if (featureCollection && onDataLoaded) {
+                onDataLoaded(featureCollection)
+                setLastAnalyzedSource('cad')
+                loadedSomething = true
+              }
+            } catch (pErr) {
+              if (
+                currentReqId !== activeRequestIdRef.current ||
+                controller.signal.aborted ||
+                axios.isCancel?.(pErr) ||
+                pErr?.name === 'CanceledError'
+              ) {
+                if (currentReqId !== activeRequestIdRef.current) {
+                  toast.dismiss(tid)
+                }
+                return
+              }
+              parseFallbackErr = pErr
+            }
+          }
+
+          if (!loadedSomething) {
+            const primaryErr = roadErr || parseFallbackErr
+            const msg =
+              primaryErr?.response?.data?.detail ||
+              primaryErr?.response?.data?.message ||
+              roadData?.detail ||
+              primaryErr?.message ||
+              'Không thể xử lý bản vẽ CAD'
+            toast.error(`Lỗi: ${msg}`, { id: tid })
+            return
           }
         }
 
         if (loadedSomething) {
           toast.success('Bóc tách và dựng tuyến đường thành công!', { id: tid })
-        } else {
-          const err =
-            roadResult.status === 'rejected'
-              ? roadResult.reason
-              : parseResult.reason
-          const msg =
-            err?.response?.data?.detail ||
-            err?.response?.data?.message ||
-            err?.message ||
-            'Không thể xử lý bản vẽ CAD'
-          toast.error(`Lỗi: ${msg}`, { id: tid })
         }
       } catch (err) {
         if (currentReqId !== activeRequestIdRef.current || axios.isCancel?.(err) || err?.name === 'CanceledError') {

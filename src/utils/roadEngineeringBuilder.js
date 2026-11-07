@@ -1054,3 +1054,126 @@ export function enrichGeoJsonWithEngineeringFeatures(
     droneSegments,
   }
 }
+
+const NON_FALLBACK_ROAD_ERROR_CODES = new Set([
+  'InvalidScaleFactor',
+  'InvalidCentralMeridian',
+  'UnconfiguredCrs',
+  'AmbiguousAxisOrder',
+  'InvalidSrid',
+  'InvalidCoordinates',
+  'InvalidVn2000',
+  'InvalidWgs84',
+  'InvalidFile',
+  'MissingFile',
+  'UnsupportedFileType',
+  'ServerBusy',
+  'ProcessingTimeout',
+  'SubprocessTerminated',
+  'ParseTimeout',
+  'InternalServerError',
+])
+
+const ALLOWED_PARSE_DXF_FALLBACK_CODES = new Set([
+  'NoCenterlineLayer',
+  'EmptyCenterline',
+  'NoLinearEntities',
+  'ParseRoadFailed',
+])
+
+const NON_FALLBACK_DETAIL_PATTERN =
+  /crs|pyproj|projection|geodetic|scale\s*factor|hệ số co giãn|hệ số múi chiếu|kinh tuyến trục|trục tọa độ|axis\s*order|quá tải|server\s*busy|timeout/i
+
+/**
+ * Builds unified Studio analytics directly from a successful `/api/cad/parse-road`
+ * response and its enriched GeoJSON bundle, without requiring a duplicate `/api/cad/parse-dxf` call.
+ */
+export function buildAnalyticsFromRoadResponse(
+  roadData,
+  roadParams = {},
+  geojson = null,
+  elapsedMs = null
+) {
+  const params = normalizeRoadParams({
+    ...roadParams,
+    roadWidth: roadParams?.roadWidth ?? roadData?.roadWidth ?? 7.0,
+  })
+  const baseAnalytics = geojson?.analytics ? { ...geojson.analytics } : {}
+  const len = Number(roadData?.totalLengthMeters ?? baseAnalytics.totalLengthMeters ?? 0)
+  const nominalAreaSqm = Number((len * params.roadWidth).toFixed(2))
+  const surfaceAreaSqm =
+    roadData?.surfaceAreaSqm ?? baseAnalytics.surfaceAreaSqm ?? nominalAreaSqm
+  const longitudinalSlabs = Math.floor(len / params.slabLength)
+  const estimatedConcreteSlabs = longitudinalSlabs * params.laneCount
+  const roadSegments = len > 0 ? Math.ceil(len / params.segmentLength) : 0
+
+  return {
+    ...baseAnalytics,
+    totalLengthMeters: len,
+    roadWidth: params.roadWidth,
+    nominalAreaSqm,
+    surfaceAreaSqm,
+    totalAreaSqm: nominalAreaSqm,
+    roadSegments,
+    longitudinalSlabs,
+    totalSlabPieces: estimatedConcreteSlabs,
+    estimatedConcreteSlabs,
+    processingTimeMs:
+      roadData?.processingTimeMs ??
+      elapsedMs ??
+      baseAnalytics.processingTimeMs ??
+      1,
+  }
+}
+
+/**
+ * Determines whether a failed `/api/cad/parse-road` call is eligible for sequential
+ * fallback to `/api/cad/parse-dxf`. Cancelled requests, stale responses, CRS/axis errors,
+ * file validation errors, timeouts, and server-overload responses MUST NOT trigger a second heavy parse.
+ */
+export function shouldFallbackToParseDxf({
+  roadData = null,
+  roadError = null,
+  isCanceled = false,
+  isStale = false,
+} = {}) {
+  if (isCanceled || isStale) return false
+  if (
+    roadError?.name === 'CanceledError' ||
+    roadError?.code === 'ERR_CANCELED' ||
+    roadError?.__CANCEL__ === true
+  ) {
+    return false
+  }
+  if (roadData?.success === true) return false
+
+  const status = roadError?.response?.status ?? null
+  const errBody = roadError?.response?.data ?? null
+
+  if (roadError && !roadError.response) {
+    return false
+  }
+  if (
+    status !== null &&
+    [400, 401, 403, 408, 413, 415, 429, 499, 500, 502, 503, 504].includes(status)
+  ) {
+    return false
+  }
+  if (roadData?.requiresAxisConfirmation || errBody?.requiresAxisConfirmation) {
+    return false
+  }
+
+  const errCode = String(errBody?.error || roadData?.error || '').trim()
+  if (NON_FALLBACK_ROAD_ERROR_CODES.has(errCode)) {
+    return false
+  }
+
+  const detail = String(
+    errBody?.detail || errBody?.message || roadData?.detail || roadError?.message || ''
+  )
+  if (NON_FALLBACK_DETAIL_PATTERN.test(detail)) {
+    return false
+  }
+
+  return ALLOWED_PARSE_DXF_FALLBACK_CODES.has(errCode)
+}
