@@ -507,12 +507,12 @@ export default function Sidebar({
           }
 
           if (!loadedSomething) {
-            const primaryErr = roadErr || parseFallbackErr
+            const primaryErr = parseFallbackErr || roadErr
             const msg =
               primaryErr?.response?.data?.detail ||
               primaryErr?.response?.data?.message ||
-              roadData?.detail ||
               primaryErr?.message ||
+              roadData?.detail ||
               'Không thể xử lý bản vẽ CAD'
             toast.error(`Lỗi: ${msg}`, { id: tid })
             return
