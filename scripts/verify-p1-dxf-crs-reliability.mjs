@@ -13,7 +13,7 @@
  * 9. crsMetadata preservation & zero fake 0.9999 fallback test
  */
 
-import { VN2000_REFERENCE_PRESETS } from '../src/utils/roadEngineeringBuilder.js'
+import { VN2000_REFERENCE_PRESETS, resolveVn2000Preset } from '../src/utils/roadEngineeringBuilder.js'
 import { vn2000ToWgs84 } from '../src/utils/crsTransformEngine.js'
 import { spawnSync } from 'child_process'
 import path from 'path'
@@ -49,15 +49,27 @@ test('P1.1: VN2000_REFERENCE_PRESETS sync parses string cm to float without Type
     }
   }
 
-  // Verify specific presets
-  const dni = VN2000_REFERENCE_PRESETS.find(p => p.id === 'dni-3deg')
-  if (!dni || parseFloat(dni.cm) !== 107.75) throw new Error('Dong Nai preset must have CM 107.75')
+  // Verify canonical 34-province presets & legacy ID resolution
+  const dni = resolveVn2000Preset('adm:dong-nai:107.75')
+  const dniLegacy = resolveVn2000Preset('dni-3deg')
+  if (!dni || parseFloat(dni.cm) !== 107.75 || !dniLegacy || parseFloat(dniLegacy.cm) !== 107.75) {
+    throw new Error('Dong Nai preset must have CM 107.75')
+  }
 
-  const hni = VN2000_REFERENCE_PRESETS.find(p => p.id === 'hni-3deg')
-  if (!hni || parseFloat(hni.cm) !== 105.00) throw new Error('Hanoi preset must have CM 105.00')
+  const ldg = resolveVn2000Preset('adm:lam-dong:107.75')
+  if (!ldg || parseFloat(ldg.cm) !== 107.75) throw new Error('Lam Dong administrative preset must have CM 107.75')
 
-  const hcm = VN2000_REFERENCE_PRESETS.find(p => p.id === 'hcm-3deg')
-  if (!hcm || parseFloat(hcm.cm) !== 105.75) throw new Error('HCMC preset must have CM 105.75')
+  const hni = resolveVn2000Preset('adm:tp-ha-noi:105.00')
+  const hniLegacy = resolveVn2000Preset('hni-3deg')
+  if (!hni || parseFloat(hni.cm) !== 105.00 || !hniLegacy || parseFloat(hniLegacy.cm) !== 105.00) {
+    throw new Error('Hanoi preset must have CM 105.00')
+  }
+
+  const hcm = resolveVn2000Preset('adm:tp-ho-chi-minh:105.75')
+  const hcmLegacy = resolveVn2000Preset('hcm-3deg')
+  if (!hcm || parseFloat(hcm.cm) !== 105.75 || !hcmLegacy || parseFloat(hcmLegacy.cm) !== 105.75) {
+    throw new Error('HCMC preset must have CM 105.75')
+  }
 })
 
 // 2. Dong Nai Coordinates Georeferencing Test

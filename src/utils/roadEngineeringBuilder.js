@@ -14,23 +14,44 @@
  * Used identically by Sidebar, CadMap, CrossSectionProfile, GeoJSON Inspector, and Excel Exporter.
  */
 
-export const VN2000_REFERENCE_PRESETS = [
-  { id: 'hcm-3deg', cm: '105.75', k0: 0.9999, zone: '3deg', label: '105°45\' (105.75°) – TP.HCM, Bình Dương, Long An, Tiền Giang (Múi 3°)' },
-  { id: 'dni-3deg', cm: '107.75', k0: 0.9999, zone: '3deg', label: '107°45\' (107.75°) – Đồng Nai, BR-VT, Đà Nẵng, Quảng Nam (Múi 3°)' },
-  { id: 'hni-3deg', cm: '105.00', k0: 0.9999, zone: '3deg', label: '105°00\' (105.00°) – Hà Nội, Cần Thơ, Hậu Giang (Múi 3°)' },
-  { id: 'hp-3deg',  cm: '105.75', k0: 0.9999, zone: '3deg', label: '105°45\' (105.75°) – Hải Phòng, Hưng Yên, Thái Bình (Múi 3°)' },
-  { id: 'tni-3deg', cm: '105.50', k0: 0.9999, zone: '3deg', label: '105°30\' (105.50°) – Tây Ninh, Vĩnh Long, Trà Vinh (Múi 3°)' },
-  { id: 'btr-3deg', cm: '106.00', k0: 0.9999, zone: '3deg', label: '106°00\' (106.00°) – Bến Tre, Bắc Ninh, Bắc Giang (Múi 3°)' },
-  { id: 'cmu-3deg', cm: '104.50', k0: 0.9999, zone: '3deg', label: '104°30\' (104.50°) – Cà Mau, Kiên Giang, An Giang (Múi 3°)' },
-  { id: 'kh-3deg',  cm: '108.25', k0: 0.9999, zone: '3deg', label: '108°15\' (108.25°) – Khánh Hòa, Lâm Đồng, Bình Thuận (Múi 3°)' },
-  { id: 'gl-3deg',  cm: '108.50', k0: 0.9999, zone: '3deg', label: '108°30\' (108.50°) – Gia Lai, Đắk Lắk, Phú Yên (Múi 3°)' },
-  { id: 'hue-3deg', cm: '107.00', k0: 0.9999, zone: '3deg', label: '107°00\' (107.00°) – Thừa Thiên Huế, Quảng Trị (Múi 3°)' },
-  { id: 'na-3deg',  cm: '104.75', k0: 0.9999, zone: '3deg', label: '104°45\' (104.75°) – Nghệ An, Đồng Tháp, Vĩnh Phúc (Múi 3°)' },
-  { id: 'qn-3deg',  cm: '107.75', k0: 0.9999, zone: '3deg', label: '107°45\' (107.75°) – Quảng Ninh (Hồ sơ kỹ thuật Múi 3°)' },
-  { id: 'vn-6deg-48', cm: '105.00', k0: 0.9996, zone: '6deg', label: '105°00\' (105.00°) – Múi 6° (Zone 48N, k0 = 0.9996)' },
-  { id: 'vn-6deg-49', cm: '111.00', k0: 0.9996, zone: '6deg', label: '111°00\' (111.00°) – Múi 6° (Zone 49N, k0 = 0.9996)' },
-  { id: 'custom',   cm: '',       k0: 0.9999, zone: 'custom', label: 'Tùy chỉnh Kinh tuyến trục & Hệ số múi chiếu (Hồ sơ thiết kế riêng)' },
-]
+import {
+  ALL_VN2000_LOOKUP_OPTIONS,
+  VN2000_CATALOG_METADATA,
+  VN2000_PROVINCE_CRS_CATALOG,
+  VN2000_ADMINISTRATIVE_OPTIONS,
+  VN2000_CADASTRAL_OPTIONS,
+  VN2000_ZONE6_OPTIONS,
+  VN2000_LEGACY_PRESET_REDIRECTS,
+  DEFAULT_VN2000_PRESET_ID,
+  VN2000_SURVEY_PRIORITY_GUIDANCE,
+  resolveVn2000Preset,
+  getVn2000OptionsByTable,
+  filterVn2000LookupOptions,
+  normalizeVn2000SearchText,
+  formatMeridianDegreeMinute,
+  formatMeridianApiDecimal,
+  formatMeridianViDecimal,
+} from '../data/vn2000ProvinceCrsCatalog.js'
+
+export const VN2000_REFERENCE_PRESETS = ALL_VN2000_LOOKUP_OPTIONS
+
+export {
+  VN2000_CATALOG_METADATA,
+  VN2000_PROVINCE_CRS_CATALOG,
+  VN2000_ADMINISTRATIVE_OPTIONS,
+  VN2000_CADASTRAL_OPTIONS,
+  VN2000_ZONE6_OPTIONS,
+  VN2000_LEGACY_PRESET_REDIRECTS,
+  DEFAULT_VN2000_PRESET_ID,
+  VN2000_SURVEY_PRIORITY_GUIDANCE,
+  resolveVn2000Preset,
+  getVn2000OptionsByTable,
+  filterVn2000LookupOptions,
+  normalizeVn2000SearchText,
+  formatMeridianDegreeMinute,
+  formatMeridianApiDecimal,
+  formatMeridianViDecimal,
+}
 
 /**
  * Ensures a coordinate tuple is [lng, lat] (or [lng, lat, z]) rounded to 8 decimal places.

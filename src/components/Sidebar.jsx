@@ -21,7 +21,9 @@ import {
 import CrsPresetSelect from './CrsPresetSelect'
 import CandidateLayerSelect from './CandidateLayerSelect'
 import {
-  VN2000_REFERENCE_PRESETS,
+  DEFAULT_VN2000_PRESET_ID,
+  VN2000_SURVEY_PRIORITY_GUIDANCE,
+  resolveVn2000Preset,
   convertRoadResponseToGeoJson,
   enrichGeoJsonWithEngineeringFeatures,
   normalizeRoadParams,
@@ -115,7 +117,7 @@ export default function Sidebar({
   const laneCount = roadParams?.laneCount ?? '2'
 
   // VN-2000 Geodetic CRS state (supports reference presets + custom CM + 3°/6° zone + explicit axis order)
-  const [selectedPresetId, setSelectedPresetId] = useState('hcm-3deg')
+  const [selectedPresetId, setSelectedPresetId] = useState(DEFAULT_VN2000_PRESET_ID)
   const [selectedCm, setSelectedCm] = useState('105.75')
   const [scaleFactor, setScaleFactor] = useState('0.9999')
   const [axisOrder, setAxisOrder] = useState('AUTO')
@@ -188,13 +190,18 @@ export default function Sidebar({
 
   const handlePresetChange = (presetId) => {
     handleCrsParamChange()
-    setSelectedPresetId(presetId)
     if (presetId === 'unconfigured') {
+      setSelectedPresetId('unconfigured')
       setSelectedCm('')
       return
     }
-    const found = VN2000_REFERENCE_PRESETS.find((p) => p.id === presetId)
-    if (found && found.id !== 'custom') {
+    if (presetId === 'custom') {
+      setSelectedPresetId('custom')
+      return
+    }
+    const found = resolveVn2000Preset(presetId)
+    if (found) {
+      setSelectedPresetId(found.id)
       const parsedCm = parseFloat(found.cm)
       if (Number.isFinite(parsedCm)) {
         setSelectedCm(parsedCm.toFixed(2))
@@ -203,6 +210,8 @@ export default function Sidebar({
       if (Number.isFinite(parsedK0)) {
         setScaleFactor(parsedK0.toFixed(4))
       }
+    } else {
+      setSelectedPresetId(presetId)
     }
   }
 
@@ -222,6 +231,7 @@ export default function Sidebar({
     setActiveCenterlineLayer(null)
     setCandidateLayers([])
     setAppliedCrsConfig(null)
+    if (onAppliedCrsConfigChange) onAppliedCrsConfigChange(null)
     setCadLayerStats([])
     if (onCustomFeaturesChange) onCustomFeaturesChange([])
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -246,6 +256,7 @@ export default function Sidebar({
         setInputMode('cad')
         setCandidateLayers([])
         setAppliedCrsConfig(null)
+        if (onAppliedCrsConfigChange) onAppliedCrsConfigChange(null)
         if (onCadFileChange) onCadFileChange(dropped)
       } else {
         toast.error('Chỉ hỗ trợ file CAD (.dxf, .dwg).')
@@ -263,6 +274,7 @@ export default function Sidebar({
       setInputMode('cad')
       setCandidateLayers([])
       setAppliedCrsConfig(null)
+      if (onAppliedCrsConfigChange) onAppliedCrsConfigChange(null)
       if (onCadFileChange) onCadFileChange(selected)
     }
   }
@@ -376,6 +388,16 @@ export default function Sidebar({
             )
             if (onSwitchTab) onSwitchTab('cad')
           }
+          const crsChangedSinceLastApply =
+            appliedCrsConfig &&
+            (Math.abs(Number(appliedCrsConfig.cm) - cmVal) > 1e-4 ||
+              Math.abs(Number(appliedCrsConfig.k0) - k0Val) > 1e-4 ||
+              appliedCrsConfig.axisOrder !== axisOrder)
+          if (crsChangedSinceLastApply) {
+            setLayerGeometries({})
+            setVisibleLayers({})
+            if (onCustomFeaturesChange) onCustomFeaturesChange([])
+          }
           const applied = { cm: cmVal, k0: k0Val, axisOrder, source: 'cad' }
           setAppliedCrsConfig(applied)
           if (onAppliedCrsConfigChange) onAppliedCrsConfigChange(applied)
@@ -462,10 +484,16 @@ export default function Sidebar({
       roadWidth,
       slabLength,
       laneCount,
+      selectedPresetId,
       selectedCm,
       scaleFactor,
+      axisOrder,
+      appliedCrsConfig,
       onDataLoaded,
       onAnalyticsLoaded,
+      onAppliedCrsConfigChange,
+      onCustomFeaturesChange,
+      onSwitchTab,
     ]
   )
 
@@ -536,6 +564,9 @@ export default function Sidebar({
 
         setCadLayerStats([])
         setLastAnalyzedSource('coords')
+        const applied = { cm: cmVal, k0: k0Val, axisOrder: effectiveAxisOrder, source: 'coords' }
+        setAppliedCrsConfig(applied)
+        if (onAppliedCrsConfigChange) onAppliedCrsConfigChange(applied)
 
         const geojson = convertRoadResponseToGeoJson(roadData, normParams)
         if (geojson && onDataLoaded) onDataLoaded(geojson)
@@ -589,10 +620,12 @@ export default function Sidebar({
       roadWidth,
       slabLength,
       laneCount,
+      selectedPresetId,
       selectedCm,
       scaleFactor,
       onDataLoaded,
       onAnalyticsLoaded,
+      onAppliedCrsConfigChange,
     ]
   )
 
@@ -749,11 +782,17 @@ export default function Sidebar({
           fd.append('centerlineLayerName', layerName)
           fd.append('targetSrid', '4326')
           fd.append('tessellationSegments', '72')
-          if (selectedCm) {
-            fd.append('centralMeridian', selectedCm.toString())
+          const effCm = appliedCrsConfig?.cm ?? selectedCm
+          const effK0 = appliedCrsConfig?.k0 ?? scaleFactor
+          const effAxis = appliedCrsConfig?.axisOrder ?? axisOrder
+          if (effCm !== undefined && effCm !== '') {
+            fd.append('centralMeridian', effCm.toString())
           }
-          if (scaleFactor) {
-            fd.append('scaleFactor', scaleFactor.toString())
+          if (effK0 !== undefined && effK0 !== '') {
+            fd.append('scaleFactor', effK0.toString())
+          }
+          if (effAxis) {
+            fd.append('axisOrder', effAxis)
           }
           const res = await axios.post(`${API_BASE}/api/cad/parse-dxf`, fd)
           const raw = res.data?.featureCollection?.features || []
@@ -796,8 +835,10 @@ export default function Sidebar({
       file,
       visibleLayers,
       layerGeometries,
+      appliedCrsConfig,
       selectedCm,
       scaleFactor,
+      axisOrder,
       onCustomFeaturesChange,
     ]
   )
@@ -1312,26 +1353,52 @@ export default function Sidebar({
                 </div>
               </div>
             ) : crsLifecycleState === 'STALE' ? (
-              <div className="p-2.5 rounded-lg border border-[#F59E0B]/50 bg-[#F59E0B]/10 flex items-start gap-2 text-[12px] text-[#FDE68A] leading-snug">
+              <div
+                data-crs-status="STALE"
+                className="p-2.5 rounded-lg border border-[#F59E0B]/50 bg-[#F59E0B]/10 flex items-start gap-2 text-[12px] text-[#FDE68A] leading-snug"
+              >
                 <AlertTriangle className="w-4 h-4 text-[#F59E0B] shrink-0 mt-0.5" />
-                <div>
-                  <strong className="text-[#F59E0B] block">Cấu hình CRS đã thay đổi (STALE)</strong>
-                  Kinh tuyến trục L₀ hoặc múi chiếu khác với dữ liệu đang xem. Bấm <strong>Phân tích lại</strong> để cập nhật bản đồ và mở khóa xuất dữ liệu.
+                <div className="space-y-0.5">
+                  <strong className="text-[#F59E0B] block">CRS chưa áp dụng (STALE)</strong>
+                  <div>
+                    Đang áp dụng trên bản đồ:{' '}
+                    <span className="font-mono font-semibold">
+                      L₀ = {Number(appliedCrsConfig?.cm).toFixed(2)}°, k₀ = {Number(appliedCrsConfig?.k0).toFixed(4)}
+                    </span>
+                    .
+                  </div>
+                  <div>
+                    Đã chọn{' '}
+                    <span className="font-mono font-semibold">
+                      L₀ = {selectedCm}°, k₀ = {scaleFactor}
+                    </span>{' '}
+                    — bấm <strong>Phân tích lại</strong> để dựng lại tuyến theo CRS mới.
+                  </div>
                 </div>
               </div>
             ) : crsLifecycleState === 'ANALYZING' ? (
-              <div className="p-2.5 rounded-lg border border-[#3B82F6]/50 bg-[#3B82F6]/10 flex items-center gap-2 text-[12px] text-[#93C5FD]">
+              <div
+                data-crs-status="ANALYZING"
+                className="p-2.5 rounded-lg border border-[#3B82F6]/50 bg-[#3B82F6]/10 flex items-center gap-2 text-[12px] text-[#93C5FD]"
+              >
                 <Loader2 className="w-4 h-4 animate-spin text-[#3B82F6] shrink-0" />
-                <span>Đang phân tích hình học &amp; chiếu tọa độ VN-2000…</span>
+                <span>
+                  {isCrsStale
+                    ? `CRS chưa áp dụng — Đang dựng lại tuyến theo L₀ = ${selectedCm}°, k₀ = ${scaleFactor}…`
+                    : 'Đang phân tích hình học & chiếu tọa độ VN-2000…'}
+                </span>
               </div>
             ) : (
-              <div className="p-2.5 rounded-lg border border-[#39B58A]/40 bg-[#39B58A]/10 flex items-center justify-between text-[12px] text-[#A7F3D0]">
+              <div
+                data-crs-status="VALID_APPLIED"
+                className="p-2.5 rounded-lg border border-[#39B58A]/40 bg-[#39B58A]/10 flex items-center justify-between text-[12px] text-[#A7F3D0]"
+              >
                 <span className="flex items-center gap-1.5 font-medium">
                   <CheckCircle2 className="w-3.5 h-3.5 text-[#39B58A]" />
                   <span>VN-2000: L₀ = {selectedCm}°, k₀ = {scaleFactor}</span>
                 </span>
-                <span className="text-[10.5px] font-mono text-[#39B58A] bg-[#39B58A]/20 px-2 py-0.5 rounded font-bold uppercase tracking-wider">
-                  ĐÃ ÁP DỤNG
+                <span className="text-[10.5px] font-mono text-[#39B58A] bg-[#39B58A]/20 px-2 py-0.5 rounded font-bold uppercase tracking-wider whitespace-nowrap shrink-0">
+                  {appliedCrsConfig ? 'ĐÃ ÁP DỤNG' : 'MẶC ĐỊNH'}
                 </span>
               </div>
             )}
@@ -1342,8 +1409,8 @@ export default function Sidebar({
               onSelectPreset={handlePresetChange}
               disabled={loading}
             />
-            <p className="text-[12px] text-[#8FA3BA] leading-snug">
-              Hỗ trợ hồ sơ kỹ thuật lịch sử hoặc nhập trực tiếp L₀, k₀ bên dưới.
+            <p className="text-[11.5px] text-[#A9B9CE] leading-snug bg-[#0B1220]/70 border border-[#27384E]/80 rounded-md px-2.5 py-1.5">
+              {VN2000_SURVEY_PRIORITY_GUIDANCE}
             </p>
           </div>
 
@@ -1611,6 +1678,11 @@ export default function Sidebar({
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span>Đang bóc tách CAD &amp; dựng tuyến…</span>
+              </>
+            ) : isCrsStale && file ? (
+              <>
+                <RefreshCw className="w-4 h-4" />
+                <span>Phân Tích Lại &amp; Áp Dụng CRS Mới (L₀ = {selectedCm}°)</span>
               </>
             ) : isSurfaceAreaProvisional ? (
               <>
