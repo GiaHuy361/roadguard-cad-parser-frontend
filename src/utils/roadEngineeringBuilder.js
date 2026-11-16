@@ -281,6 +281,53 @@ const DERIVED_FEATURE_TYPES = new Set([
   'DroneCompletedSegment',
 ])
 
+export const SECTION_3_FIELD_SPECS = [
+  {
+    key: 'roadWidth',
+    label: 'Bề rộng mặt (B)',
+    shortLabel: 'Bề rộng B',
+    unit: 'm',
+    step: '0.5',
+    min: 1.0,
+    max: 60.0,
+    allowZero: false,
+    description: 'Bề rộng mặt đường xe chạy theo hồ sơ thiết kế',
+  },
+  {
+    key: 'laneCount',
+    label: 'Số dải tấm ngang',
+    shortLabel: 'Số dải tấm',
+    unit: 'dải',
+    step: '1',
+    min: 1,
+    max: 8,
+    allowZero: false,
+    description: 'Số dải phân chia tấm bê tông theo phương ngang mặt cắt',
+  },
+  {
+    key: 'segmentLength',
+    label: 'Bước cọc / Đoạn',
+    shortLabel: 'Bước cọc',
+    unit: 'm',
+    step: '10',
+    min: 10,
+    max: 1000,
+    allowZero: false,
+    description: 'Cự ly cọc lý trình và chia đoạn quản lý thi công/khảo sát',
+  },
+  {
+    key: 'slabLength',
+    label: 'Chiều dài tấm BTXM',
+    shortLabel: 'Chiều dài tấm',
+    unit: 'm',
+    step: '0.5',
+    min: 1.0,
+    max: 20.0,
+    allowZero: false,
+    description: 'Chiều dài một tấm bê tông xi măng tiêu chuẩn giữa hai khe co',
+  },
+]
+
 export const PAVEMENT_DESIGN_FIELD_SPECS = [
   {
     key: 'slabThicknessCentimeters',
@@ -980,6 +1027,138 @@ export function extractBtxmDesignParamsFromDxfText(dxfText, fileName = '') {
     fields,
     autoFilledInputs,
     contextMentions,
+  }
+}
+
+/**
+ * Scans DXF text for Section 3 road geometry parameters (B, laneCount, segmentLength, slabLength).
+ */
+export function extractRoadGeometryParamsFromDxfText(dxfText, fileName = '') {
+  const tStart = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  const rawContent = typeof dxfText === 'string' ? dxfText : ''
+
+  const fields = {}
+  const autoFilledInputs = {
+    roadWidth: '',
+    laneCount: '',
+    segmentLength: '',
+    slabLength: '',
+  }
+  let extractedCount = 0
+  let missingCount = 0
+
+  for (const spec of SECTION_3_FIELD_SPECS) {
+    fields[spec.key] = {
+      key: spec.key,
+      label: spec.label,
+      unit: spec.unit,
+      status: 'NOT_FOUND',
+      statusLabel: 'Chưa có dữ liệu',
+      autoFillValue: '',
+      normalizedValue: null,
+      allHits: [],
+      summaryText: 'Không tìm thấy ghi chú thông số này trong bản vẽ DXF.',
+    }
+  }
+
+  if (rawContent.length > 0) {
+    // Regex matchers for geometry annotations
+    const ROAD_GEOM_EXCLUSIONS = /\b(?:suoi|ranh|muong|cong|via\s*he|bo\s*via|ta\s*luy|le\s*duong|ho\s*ga|day\s*cong)\b/i
+
+    const matchers = {
+      roadWidth: /(?:bề\s*rộng\s*(?:mặt\s*(?:đường|tuyến)?|tuyến|xe\s*chạy)|be\s*rong\s*(?:mat\s*(?:duong|tuyen)?|tuyen|xe\s*chay)|chiều\s*rộng\s*mặt\s*(?:đường)?|chieu\s*rong\s*mat\s*(?:duong)?|mặt\s*đường\s*B|mat\s*duong\s*B)\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met|cm|mm)?/i,
+      laneCount: /(?:số\s*dải\s*(?:tấm)?|so\s*dai\s*(?:tam)?|số\s*làn\s*(?:xe)?|so\s*lan\s*(?:xe)?)\s*[=:]\s*([1-8])\s*(?:dải|dai|làn|lan)?/i,
+      segmentLength: /(?:bước\s*cọc|buoc\s*coc|cự\s*ly\s*cọc|cu\s*ly\s*coc|khoảng\s*cách\s*cọc|khoang\s*cach\s*coc|chiều\s*dài\s*phân\s*đoạn|chieu\s*dai\s*phan\s*đoan)\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met)?/i,
+      slabLength: /(?:chiều\s*dài\s*tấm|chieu\s*dai\s*tam|dài\s*tấm|dai\s*tam|tấm\s*dài|tam\s*dai)\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met)?/i,
+    }
+
+    // Scan lines for matches
+    const lines = rawContent.split(/\r?\n/)
+    for (let i = 0; i < lines.length - 1; i++) {
+      const code = lines[i].trim()
+      const val = lines[i + 1].trim()
+      if (code === '1' || code === '3' || code === '1000') {
+        const decoded = decodeCadText(val)
+        if (!decoded || ROAD_GEOM_EXCLUSIONS.test(decoded)) continue
+
+        for (const spec of SECTION_3_FIELD_SPECS) {
+          if (fields[spec.key].status === 'EXTRACTED') continue
+          const regex = matchers[spec.key]
+          const m = regex.exec(decoded)
+          if (m) {
+            const rawNum = m[1].replace(',', '.')
+            let num = parseFloat(rawNum)
+            const rawUnit = m[2] ? m[2].toLowerCase() : spec.unit
+            if (rawUnit === 'cm') num /= 100
+            else if (rawUnit === 'mm') num /= 1000
+
+            if (Number.isFinite(num) && num >= spec.min && num <= spec.max) {
+              const strVal = String(num)
+              fields[spec.key] = {
+                key: spec.key,
+                label: spec.label,
+                unit: spec.unit,
+                status: 'EXTRACTED',
+                statusLabel: 'Đọc được từ DXF',
+                autoFillValue: strVal,
+                normalizedValue: num,
+                rawQuote: m[0],
+                rawValueText: `${m[1]} ${m[2] || spec.unit}`,
+                layer: '0',
+                summaryText: `Trích từ "${m[0]}" trong bản vẽ`,
+              }
+              autoFilledInputs[spec.key] = strVal
+              extractedCount++
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (const spec of SECTION_3_FIELD_SPECS) {
+    if (fields[spec.key].status !== 'EXTRACTED') {
+      missingCount++
+    }
+  }
+
+  const elapsedMs = Math.max(
+    1,
+    Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - tStart)
+  )
+
+  return {
+    fileName: fileName || 'ban_ve.dxf',
+    isDxf: true,
+    elapsedMs,
+    extractedCount,
+    missingCount,
+    fields,
+    autoFilledInputs,
+  }
+}
+
+/**
+ * Combined extractor that scans both Section 3 (Road Geometry) and Section 4 (BTXM Design).
+ */
+export function extractAllDxfProjectParams(dxfText, fileName = '') {
+  const btxm = extractBtxmDesignParamsFromDxfText(dxfText, fileName)
+  const geometry = extractRoadGeometryParamsFromDxfText(dxfText, fileName)
+  return {
+    fileName: fileName || 'ban_ve.dxf',
+    isDxf: true,
+    btxm,
+    geometry,
+    extractedCount: btxm.extractedCount + geometry.extractedCount,
+    missingCount: btxm.missingCount + geometry.missingCount,
+    autoFilledInputs: {
+      ...geometry.autoFilledInputs,
+      ...btxm.autoFilledInputs,
+    },
+    fields: {
+      ...geometry.fields,
+      ...btxm.fields,
+    },
   }
 }
 

@@ -90,6 +90,7 @@ export default function App() {
     expansionJointSpacingMeters: '',
     expansionJointGapMillimeters: '',
     dxfBtxmExtraction: null,
+    dxfGeometryExtraction: null,
   })
 
   // Responsive auto-collapse of Right Inspector at <= 1360px so Center Viewport stays dominant

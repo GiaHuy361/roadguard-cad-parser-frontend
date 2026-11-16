@@ -17,13 +17,26 @@ import {
   Navigation,
   AlertTriangle,
   RefreshCw,
+  Building2,
+  FolderGit2,
 } from 'lucide-react'
 import CrsPresetSelect from './CrsPresetSelect'
 import CandidateLayerSelect from './CandidateLayerSelect'
+import ProjectProfileModal from './ProjectProfileModal'
+import {
+  loadProjectProfiles,
+  saveProjectProfiles,
+  getActiveProjectId,
+  saveActiveProjectId,
+  resolveParameterFieldState,
+  SECTION_3_SPECS,
+  SECTION_4_SPECS,
+} from '../utils/projectProfiles'
 import {
   DEFAULT_VN2000_PRESET_ID,
   VN2000_SURVEY_PRIORITY_GUIDANCE,
   PAVEMENT_DESIGN_FIELD_SPECS,
+  SECTION_3_FIELD_SPECS,
   resolveVn2000Preset,
   convertRoadResponseToGeoJson,
   enrichGeoJsonWithEngineeringFeatures,
@@ -31,6 +44,7 @@ import {
   buildAnalyticsFromRoadResponse,
   shouldFallbackToParseDxf,
   extractBtxmDesignParamsFromDxfText,
+  extractRoadGeometryParamsFromDxfText,
 } from '../utils/roadEngineeringBuilder'
 import {
   parseWgs84CoordinateText,
@@ -196,18 +210,111 @@ export default function Sidebar({
     }
   }
 
+  const dxfGeometryExtraction = roadParams?.dxfGeometryExtraction ?? null
+
+  // Project Parameter Profiles state
+  const [projectProfiles, setProjectProfiles] = useState(() => loadProjectProfiles())
+  const [activeProjectId, setActiveProjectId] = useState(() => getActiveProjectId())
+  const [isProjectModalOpen, setIsProjectModalOpen] = useState(false)
+
+  const activeProject = useMemo(() => {
+    return (
+      projectProfiles.find((p) => p.id === activeProjectId) ||
+      projectProfiles[0] ||
+      DEFAULT_PROJECT_PROFILES[0]
+    )
+  }, [projectProfiles, activeProjectId])
+
+  const projectProfilesRef = useRef(projectProfiles)
+  projectProfilesRef.current = projectProfiles
+  const activeProjectIdRef = useRef(activeProjectId)
+  activeProjectIdRef.current = activeProjectId
+
   const updateParam = (key, val) => {
-    if (
-      key === 'slabThicknessCentimeters' ||
-      key === 'contractionJointSpacingMeters' ||
-      key === 'expansionJointSpacingMeters' ||
-      key === 'expansionJointGapMillimeters'
-    ) {
-      dirtyFieldsForCurrentScanRef.current.add(key)
-    }
+    dirtyFieldsForCurrentScanRef.current.add(key)
     if (setRoadParams) {
       setRoadParams((prev) => ({ ...prev, [key]: val }))
     }
+  }
+
+  const handleSelectProject = (newProjectId) => {
+    setActiveProjectId(newProjectId)
+    saveActiveProjectId(newProjectId)
+    const newProj =
+      projectProfiles.find((p) => p.id === newProjectId) || projectProfiles[0]
+    if (!newProj) return
+
+    const dirtySet = dirtyFieldsForCurrentScanRef.current || new Set()
+    setRoadParams((prev) => {
+      const btxmInputs = prev.dxfBtxmExtraction?.autoFilledInputs || {}
+      const geomInputs = prev.dxfGeometryExtraction?.autoFilledInputs || {}
+
+      const getEffective = (fieldKey, dxfVal, projVal) => {
+        if (dirtySet.has(fieldKey)) return prev[fieldKey]
+        if (dxfVal !== undefined && dxfVal !== null && String(dxfVal).trim() !== '') {
+          return String(dxfVal)
+        }
+        if (projVal !== undefined && projVal !== null && String(projVal).trim() !== '') {
+          return String(projVal)
+        }
+        return ''
+      }
+
+      return {
+        ...prev,
+        roadWidth: getEffective(
+          'roadWidth',
+          geomInputs.roadWidth,
+          newProj.params?.roadWidth
+        ),
+        laneCount: getEffective(
+          'laneCount',
+          geomInputs.laneCount,
+          newProj.params?.laneCount
+        ),
+        segmentLength: getEffective(
+          'segmentLength',
+          geomInputs.segmentLength,
+          newProj.params?.segmentLength
+        ),
+        slabLength: getEffective(
+          'slabLength',
+          geomInputs.slabLength,
+          newProj.params?.slabLength
+        ),
+        slabThicknessCentimeters: getEffective(
+          'slabThicknessCentimeters',
+          btxmInputs.slabThicknessCentimeters,
+          newProj.params?.slabThicknessCentimeters
+        ),
+        contractionJointSpacingMeters: getEffective(
+          'contractionJointSpacingMeters',
+          btxmInputs.contractionJointSpacingMeters,
+          newProj.params?.contractionJointSpacingMeters
+        ),
+        expansionJointSpacingMeters: getEffective(
+          'expansionJointSpacingMeters',
+          btxmInputs.expansionJointSpacingMeters,
+          newProj.params?.expansionJointSpacingMeters
+        ),
+        expansionJointGapMillimeters: getEffective(
+          'expansionJointGapMillimeters',
+          btxmInputs.expansionJointGapMillimeters,
+          newProj.params?.expansionJointGapMillimeters
+        ),
+      }
+    })
+
+    if (newProj.crs?.centralMeridian) {
+      setSelectedCm(String(newProj.crs.centralMeridian))
+    }
+    toast.success(`Đã áp dụng bộ thông số dự án: ${newProj.name}`)
+  }
+
+  const handleSaveProfiles = (updatedProfiles) => {
+    setProjectProfiles(updatedProfiles)
+    saveProjectProfiles(updatedProfiles)
+    toast.success('Đã lưu bộ thông số dự án.')
   }
 
   const scanCadFileForBtxmParams = useCallback(
@@ -216,40 +323,52 @@ export default function Sidebar({
       dirtyFieldsForCurrentScanRef.current = new Set()
       if (!setRoadParams) return
 
-      // Immediately clear previous file's BTXM values and evidence so switching DXFs never retains stale values
-      setRoadParams((prev) => ({
-        ...prev,
-        slabThicknessCentimeters: '',
-        contractionJointSpacingMeters: '',
-        expansionJointSpacingMeters: '',
-        expansionJointGapMillimeters: '',
-        dxfBtxmExtraction: null,
-      }))
+      const activeProj =
+        projectProfilesRef.current.find(
+          (p) => p.id === activeProjectIdRef.current
+        ) ||
+        projectProfilesRef.current[0] ||
+        DEFAULT_PROJECT_PROFILES[0]
 
-      if (!selectedFile) return
+      if (!selectedFile) {
+        setRoadParams((prev) => ({
+          ...prev,
+          roadWidth: activeProj.params?.roadWidth ?? '',
+          laneCount: activeProj.params?.laneCount ?? '',
+          segmentLength: activeProj.params?.segmentLength ?? '',
+          slabLength: activeProj.params?.slabLength ?? '',
+          slabThicknessCentimeters:
+            activeProj.params?.slabThicknessCentimeters ?? '',
+          contractionJointSpacingMeters:
+            activeProj.params?.contractionJointSpacingMeters ?? '',
+          expansionJointSpacingMeters:
+            activeProj.params?.expansionJointSpacingMeters ?? '',
+          expansionJointGapMillimeters:
+            activeProj.params?.expansionJointGapMillimeters ?? '',
+          dxfBtxmExtraction: null,
+          dxfGeometryExtraction: null,
+        }))
+        return
+      }
 
       const lowerName = String(selectedFile.name || '').toLowerCase()
       if (!lowerName.endsWith('.dxf')) {
         setRoadParams((prev) => ({
           ...prev,
-          slabThicknessCentimeters: '',
-          contractionJointSpacingMeters: '',
-          expansionJointSpacingMeters: '',
-          expansionJointGapMillimeters: '',
-          dxfBtxmExtraction: {
-            fileName: selectedFile.name,
-            isDxf: false,
-            extractedCount: 0,
-            ambiguousCount: 0,
-            missingCount: 4,
-            fields: {},
-            autoFilledInputs: {
-              slabThicknessCentimeters: '',
-              contractionJointSpacingMeters: '',
-              expansionJointSpacingMeters: '',
-              expansionJointGapMillimeters: '',
-            },
-          },
+          roadWidth: activeProj.params?.roadWidth ?? '',
+          laneCount: activeProj.params?.laneCount ?? '',
+          segmentLength: activeProj.params?.segmentLength ?? '',
+          slabLength: activeProj.params?.slabLength ?? '',
+          slabThicknessCentimeters:
+            activeProj.params?.slabThicknessCentimeters ?? '',
+          contractionJointSpacingMeters:
+            activeProj.params?.contractionJointSpacingMeters ?? '',
+          expansionJointSpacingMeters:
+            activeProj.params?.expansionJointSpacingMeters ?? '',
+          expansionJointGapMillimeters:
+            activeProj.params?.expansionJointGapMillimeters ?? '',
+          dxfBtxmExtraction: null,
+          dxfGeometryExtraction: null,
         }))
         return
       }
@@ -265,51 +384,145 @@ export default function Sidebar({
           )
         }
         if (btxmScanSeqRef.current !== scanId) return
-        const extraction = extractBtxmDesignParamsFromDxfText(
+
+        const btxmExtraction = extractBtxmDesignParamsFromDxfText(
+          dxfText,
+          selectedFile.name
+        )
+        const geomExtraction = extractRoadGeometryParamsFromDxfText(
           dxfText,
           selectedFile.name
         )
         if (btxmScanSeqRef.current !== scanId) return
 
         const dirtySet = new Set(dirtyFieldsForCurrentScanRef.current)
-        setRoadParams((prev) => ({
-          ...prev,
-          slabThicknessCentimeters: dirtySet.has('slabThicknessCentimeters')
-            ? prev.slabThicknessCentimeters
-            : extraction.autoFilledInputs.slabThicknessCentimeters ?? '',
-          contractionJointSpacingMeters: dirtySet.has('contractionJointSpacingMeters')
-            ? prev.contractionJointSpacingMeters
-            : extraction.autoFilledInputs.contractionJointSpacingMeters ?? '',
-          expansionJointSpacingMeters: dirtySet.has('expansionJointSpacingMeters')
-            ? prev.expansionJointSpacingMeters
-            : extraction.autoFilledInputs.expansionJointSpacingMeters ?? '',
-          expansionJointGapMillimeters: dirtySet.has('expansionJointGapMillimeters')
-            ? prev.expansionJointGapMillimeters
-            : extraction.autoFilledInputs.expansionJointGapMillimeters ?? '',
-          dxfBtxmExtraction: extraction,
-        }))
+        const getEffectiveVal = (fieldKey, dxfVal, projVal) => {
+          if (dirtySet.has(fieldKey)) return undefined
+          // Priority 1: DXF extracted
+          if (
+            dxfVal !== undefined &&
+            dxfVal !== null &&
+            String(dxfVal).trim() !== ''
+          ) {
+            return String(dxfVal)
+          }
+          // Priority 2: Active project profile
+          if (
+            projVal !== undefined &&
+            projVal !== null &&
+            String(projVal).trim() !== ''
+          ) {
+            return String(projVal)
+          }
+          // Priority 3: Blank
+          return ''
+        }
+
+        setRoadParams((prev) => {
+          const next = { ...prev }
+          const btxmInputs = btxmExtraction.autoFilledInputs || {}
+          const geomInputs = geomExtraction.autoFilledInputs || {}
+
+          const rw = getEffectiveVal(
+            'roadWidth',
+            geomInputs.roadWidth,
+            activeProj.params?.roadWidth
+          )
+          if (rw !== undefined) next.roadWidth = rw
+
+          const lc = getEffectiveVal(
+            'laneCount',
+            geomInputs.laneCount,
+            activeProj.params?.laneCount
+          )
+          if (lc !== undefined) next.laneCount = lc
+
+          const sl = getEffectiveVal(
+            'segmentLength',
+            geomInputs.segmentLength,
+            activeProj.params?.segmentLength
+          )
+          if (sl !== undefined) next.segmentLength = sl
+
+          const sb = getEffectiveVal(
+            'slabLength',
+            geomInputs.slabLength,
+            activeProj.params?.slabLength
+          )
+          if (sb !== undefined) next.slabLength = sb
+
+          const st = getEffectiveVal(
+            'slabThicknessCentimeters',
+            btxmInputs.slabThicknessCentimeters,
+            activeProj.params?.slabThicknessCentimeters
+          )
+          if (st !== undefined) next.slabThicknessCentimeters = st
+
+          const cj = getEffectiveVal(
+            'contractionJointSpacingMeters',
+            btxmInputs.contractionJointSpacingMeters,
+            activeProj.params?.contractionJointSpacingMeters
+          )
+          if (cj !== undefined) next.contractionJointSpacingMeters = cj
+
+          const ej = getEffectiveVal(
+            'expansionJointSpacingMeters',
+            btxmInputs.expansionJointSpacingMeters,
+            activeProj.params?.expansionJointSpacingMeters
+          )
+          if (ej !== undefined) next.expansionJointSpacingMeters = ej
+
+          const eg = getEffectiveVal(
+            'expansionJointGapMillimeters',
+            btxmInputs.expansionJointGapMillimeters,
+            activeProj.params?.expansionJointGapMillimeters
+          )
+          if (eg !== undefined) next.expansionJointGapMillimeters = eg
+
+          next.dxfBtxmExtraction = btxmExtraction
+          next.dxfGeometryExtraction = geomExtraction
+          return next
+        })
+
+        // Apply active project central meridian if configured
+        if (activeProj.crs?.centralMeridian) {
+          setSelectedCm(String(activeProj.crs.centralMeridian))
+        }
       } catch {
         if (btxmScanSeqRef.current !== scanId) return
         const dirtySet = new Set(dirtyFieldsForCurrentScanRef.current)
         setRoadParams((prev) => ({
           ...prev,
+          roadWidth: dirtySet.has('roadWidth')
+            ? prev.roadWidth
+            : activeProj.params?.roadWidth ?? '',
+          laneCount: dirtySet.has('laneCount')
+            ? prev.laneCount
+            : activeProj.params?.laneCount ?? '',
+          segmentLength: dirtySet.has('segmentLength')
+            ? prev.segmentLength
+            : activeProj.params?.segmentLength ?? '',
+          slabLength: dirtySet.has('slabLength')
+            ? prev.slabLength
+            : activeProj.params?.slabLength ?? '',
           slabThicknessCentimeters: dirtySet.has('slabThicknessCentimeters')
             ? prev.slabThicknessCentimeters
-            : '',
+            : activeProj.params?.slabThicknessCentimeters ?? '',
           contractionJointSpacingMeters: dirtySet.has('contractionJointSpacingMeters')
             ? prev.contractionJointSpacingMeters
-            : '',
+            : activeProj.params?.contractionJointSpacingMeters ?? '',
           expansionJointSpacingMeters: dirtySet.has('expansionJointSpacingMeters')
             ? prev.expansionJointSpacingMeters
-            : '',
+            : activeProj.params?.expansionJointSpacingMeters ?? '',
           expansionJointGapMillimeters: dirtySet.has('expansionJointGapMillimeters')
             ? prev.expansionJointGapMillimeters
-            : '',
+            : activeProj.params?.expansionJointGapMillimeters ?? '',
           dxfBtxmExtraction: null,
+          dxfGeometryExtraction: null,
         }))
       }
     },
-    [setRoadParams]
+    [setRoadParams, setSelectedCm]
   )
 
   const handleRemoveFile = () => {
@@ -1179,6 +1392,62 @@ export default function Sidebar({
       }).length
   }, [coordsText])
 
+  const sec3FieldStates = useMemo(() => {
+    const states = {}
+    const geomInputs = dxfGeometryExtraction?.autoFilledInputs || {}
+    const geomFields = dxfGeometryExtraction?.fields || {}
+    const dirtySet = dirtyFieldsForCurrentScanRef.current || new Set()
+
+    for (const spec of SECTION_3_SPECS) {
+      states[spec.key] = resolveParameterFieldState({
+        key: spec.key,
+        userOverrideVal: roadParams?.[spec.key],
+        isUserDirty: dirtySet.has(spec.key),
+        dxfExtractedVal: geomInputs[spec.key],
+        dxfEvidence: geomFields[spec.key],
+        projectVal: activeProject.params?.[spec.key],
+        projectName: activeProject.name,
+        projectCode: activeProject.code,
+      })
+    }
+    return states
+  }, [dxfGeometryExtraction, roadParams, activeProject])
+
+  const missingSec3Fields = useMemo(() => {
+    return SECTION_3_SPECS.filter((spec) => {
+      const val = roadParams?.[spec.key]
+      return val === undefined || val === null || String(val).trim() === ''
+    })
+  }, [roadParams])
+
+  const sec4FieldStates = useMemo(() => {
+    const states = {}
+    const btxmInputs = dxfBtxmExtraction?.autoFilledInputs || {}
+    const btxmFields = dxfBtxmExtraction?.fields || {}
+    const dirtySet = dirtyFieldsForCurrentScanRef.current || new Set()
+
+    for (const spec of SECTION_4_SPECS) {
+      states[spec.key] = resolveParameterFieldState({
+        key: spec.key,
+        userOverrideVal: roadParams?.[spec.key],
+        isUserDirty: dirtySet.has(spec.key),
+        dxfExtractedVal: btxmInputs[spec.key],
+        dxfEvidence: btxmFields[spec.key],
+        projectVal: activeProject.params?.[spec.key],
+        projectName: activeProject.name,
+        projectCode: activeProject.code,
+      })
+    }
+    return states
+  }, [dxfBtxmExtraction, roadParams, activeProject])
+
+  const missingSec4Fields = useMemo(() => {
+    return SECTION_4_SPECS.filter((spec) => {
+      const val = roadParams?.[spec.key]
+      return val === undefined || val === null || String(val).trim() === ''
+    })
+  }, [roadParams])
+
   if (collapsed) return null
 
   return (
@@ -1204,6 +1473,53 @@ export default function Sidebar({
 
       {/* ── Scrollable Configuration Body ── */}
       <div className="flex-1 overflow-y-auto divide-y divide-[#27384E]">
+        {/* ── SECTION 0: PROJECT PARAMETER PROFILE (BỘ THÔNG SỐ DỰ ÁN) ── */}
+        <section
+          data-testid="project-profile-section"
+          className="px-4 py-3 bg-[#0B1220]/80 border-b border-[#27384E] space-y-2.5"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-[12px] font-bold text-[#E8EEF6] uppercase tracking-wider">
+              <Building2 className="w-4 h-4 text-[#F06421]" />
+              <span>Bộ thông số dự án</span>
+            </div>
+            <button
+              type="button"
+              data-testid="open-project-modal-btn"
+              onClick={() => setIsProjectModalOpen(true)}
+              className="text-[11px] font-semibold px-2 py-0.5 rounded bg-[#17263C] hover:bg-[#20324D] border border-[#27384E] text-[#22B7C9] flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              <Settings2 className="w-3 h-3" />
+              <span>Quản lý</span>
+            </button>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="relative">
+              <select
+                data-testid="project-profile-select"
+                value={activeProjectId}
+                onChange={(e) => handleSelectProject(e.target.value)}
+                className="w-full pl-2.5 pr-8 py-1.5 rounded-md bg-[#111D2E] border border-[#27384E] text-[12px] font-medium text-[#E8EEF6] focus:border-[#22B7C9] focus:outline-none cursor-pointer"
+              >
+                {projectProfiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    [{p.code}] {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Quick Param Summary Strip */}
+            <div className="px-2.5 py-1.5 rounded bg-[#0B1220] border border-[#1E2E42] flex items-center justify-between text-[11px]">
+              <span className="text-[#8FA3BA]">Hồ sơ chuẩn:</span>
+              <span className="font-mono text-[#22B7C9] font-medium">
+                B={activeProject.params?.roadWidth || '-'}m • Cọc={activeProject.params?.segmentLength || '-'}m • Dày={activeProject.params?.slabThicknessCentimeters || '-'}cm
+              </span>
+            </div>
+          </div>
+        </section>
+
         {/* ── SECTION 1: DATA INPUT SOURCE ── */}
         <section className="px-4 py-4 space-y-3">
           <div className="text-[12px] font-bold text-[#A9B9CE] uppercase tracking-wider">
@@ -1676,99 +1992,132 @@ export default function Sidebar({
         </section>
 
         {/* ── SECTION 3: ROAD GEOMETRY & CONCRETE PAVEMENT PARAMETERS ── */}
-        <section className="px-4 py-4 space-y-3">
-          <div className="text-[12px] font-bold text-[#A9B9CE] uppercase tracking-wider">
-            3. Thông số hình học &amp; Tấm BTXM
+        <section
+          data-testid="road-geometry-section"
+          className="px-4 py-4 space-y-3"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[12px] font-bold text-[#A9B9CE] uppercase tracking-wider">
+              3. Thông số hình học &amp; Tấm BTXM
+            </div>
+            <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded bg-[#17263C] border border-[#27384E] text-[#22B7C9]">
+              Hình học tuyến
+            </span>
           </div>
 
+          {/* Missing Fields Indicator / Complete Banner for Section 3 */}
+          {missingSec3Fields.length > 0 ? (
+            <div
+              data-testid="missing-geometry-alert"
+              className="p-2.5 rounded-md bg-[#EF4444]/10 border border-[#EF4444]/40 text-[11.5px] text-[#FCA5A5] flex items-center gap-2"
+            >
+              <AlertTriangle className="w-4 h-4 text-[#EF4444] shrink-0" />
+              <div className="leading-snug">
+                Chưa có dữ liệu ở cả 2 nguồn, cần bổ sung:{' '}
+                <strong>{missingSec3Fields.map((s) => s.label).join(', ')}</strong>
+              </div>
+            </div>
+          ) : (
+            <div
+              data-testid="complete-geometry-banner"
+              className="p-2 rounded-md bg-[#22C55E]/10 border border-[#22C55E]/30 text-[11px] text-[#4ADE80] flex items-center gap-1.5"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-[#4ADE80] shrink-0" />
+              <span>Đã đủ thông số hình học (Sẵn sàng dựng tuyến)</span>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
-            {/* Road Width B */}
-            <div className="space-y-1">
-              <label className="block text-[12.5px] font-medium text-[#C0CEDF]">
-                Bề rộng mặt (B)
-              </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  step="0.5"
-                  min="1.0"
-                  max="60.0"
-                  value={roadWidth}
-                  placeholder="Chưa có dữ liệu"
-                  onChange={(e) => updateParam('roadWidth', e.target.value)}
-                  className="w-full pl-3 pr-8 py-2 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#F06421] focus:outline-none text-[13px] font-mono font-bold tabular-nums text-[#E8EEF6] placeholder-[#7E92AA]/60"
-                />
-                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] font-mono text-[#8FA3BA]">
-                  m
-                </span>
-              </div>
-            </div>
+            {SECTION_3_SPECS.map((spec) => {
+              const fState = sec3FieldStates[spec.key] || {}
+              return (
+                <div key={spec.key} className="space-y-1">
+                  <div className="flex items-center justify-between gap-1">
+                    <label
+                      htmlFor={`input-${spec.key}`}
+                      className="block text-[12px] font-medium text-[#C0CEDF] leading-snug truncate"
+                      title={spec.label}
+                    >
+                      {spec.label}
+                    </label>
+                    <span
+                      data-testid={`source-badge-${spec.key}`}
+                      className={`text-[9.5px] font-semibold px-1 py-0.5 rounded border shrink-0 ${fState.sourceBadgeClass || 'bg-[#17263C] text-[#8FA3BA] border-[#27384E]'}`}
+                      title={fState.sourceLabel}
+                    >
+                      {fState.sourceLabel || 'Chưa có dữ liệu'}
+                    </span>
+                  </div>
 
-            {/* Horizontal Slab Lanes */}
-            <div className="space-y-1">
-              <label className="block text-[12.5px] font-medium text-[#C0CEDF]">
-                Số dải tấm ngang
-              </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  step="1"
-                  min="1"
-                  max="8"
-                  value={laneCount}
-                  placeholder="Chưa có dữ liệu"
-                  onChange={(e) => updateParam('laneCount', e.target.value)}
-                  className="w-full pl-3 pr-10 py-2 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#F06421] focus:outline-none text-[13px] font-mono font-bold tabular-nums text-[#E8EEF6] placeholder-[#7E92AA]/60"
-                />
-                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] font-mono text-[#8FA3BA]">
-                  dải
-                </span>
-              </div>
-            </div>
+                  <div className="relative">
+                    <input
+                      id={`input-${spec.key}`}
+                      data-testid={`geometry-input-${spec.key}`}
+                      type="number"
+                      step={spec.step || 'any'}
+                      min={spec.min}
+                      max={spec.max}
+                      value={roadParams?.[spec.key] ?? ''}
+                      placeholder="Chưa có dữ liệu"
+                      onChange={(e) => updateParam(spec.key, e.target.value)}
+                      className={`w-full pl-3 pr-8 py-2 rounded-md bg-[#0B1220] border focus:outline-none text-[13px] font-mono font-bold tabular-nums text-[#E8EEF6] placeholder-[#7E92AA]/60 ${
+                        fState.isMissing
+                          ? 'border-[#27384E] focus:border-[#22B7C9]'
+                          : fState.hasConflict
+                          ? 'border-[#F59E0B]/60 focus:border-[#F59E0B]'
+                          : fState.source === 'FROM_DXF'
+                          ? 'border-[#22C55E]/60 focus:border-[#22B7C9]'
+                          : fState.source === 'FROM_PROJECT'
+                          ? 'border-[#22B7C9]/60 focus:border-[#22B7C9]'
+                          : 'border-[#27384E] focus:border-[#F06421]'
+                      }`}
+                    />
+                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] font-mono text-[#8FA3BA]">
+                      {spec.unit}
+                    </span>
+                  </div>
 
-            {/* Segment Length */}
-            <div className="space-y-1">
-              <label className="block text-[12.5px] font-medium text-[#C0CEDF]">
-                Bước cọc / Đoạn
-              </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  step="10"
-                  min="10"
-                  max="1000"
-                  value={segmentLength}
-                  placeholder="Chưa có dữ liệu"
-                  onChange={(e) => updateParam('segmentLength', e.target.value)}
-                  className="w-full pl-3 pr-8 py-2 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#22B7C9] focus:outline-none text-[13px] font-mono font-bold tabular-nums text-[#E8EEF6] placeholder-[#7E92AA]/60"
-                />
-                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] font-mono text-[#8FA3BA]">
-                  m
-                </span>
-              </div>
-            </div>
-
-            {/* Slab Length */}
-            <div className="space-y-1">
-              <label className="block text-[12.5px] font-medium text-[#C0CEDF]">
-                Chiều dài tấm BTXM
-              </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  step="0.5"
-                  min="1.0"
-                  max="20.0"
-                  value={slabLength}
-                  placeholder="Chưa có dữ liệu"
-                  onChange={(e) => updateParam('slabLength', e.target.value)}
-                  className="w-full pl-3 pr-8 py-2 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#22B7C9] focus:outline-none text-[13px] font-mono font-bold tabular-nums text-[#E8EEF6] placeholder-[#7E92AA]/60"
-                />
-                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] font-mono text-[#8FA3BA]">
-                  m
-                </span>
-              </div>
-            </div>
+                  {/* Conflict Box if DXF and Project differ */}
+                  {fState.hasConflict && (
+                    <div
+                      data-testid={`conflict-alert-${spec.key}`}
+                      className="p-1.5 rounded bg-[#F59E0B]/10 border border-[#F59E0B]/40 space-y-1 text-[10.5px]"
+                    >
+                      <div className="flex items-center gap-1 text-[#FBBF24] font-medium leading-tight">
+                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                        <span>DXF ({fState.dxfValue} {spec.unit}) ≠ Dự án ({fState.projectValue} {spec.unit})</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          data-testid={`use-dxf-btn-${spec.key}`}
+                          onClick={() => updateParam(spec.key, fState.dxfValue)}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
+                            String(roadParams?.[spec.key]) === String(fState.dxfValue)
+                              ? 'bg-[#22C55E]/20 text-[#4ADE80] border-[#22C55E]/50'
+                              : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
+                          }`}
+                        >
+                          DXF: {fState.dxfValue}
+                        </button>
+                        <button
+                          type="button"
+                          data-testid={`use-proj-btn-${spec.key}`}
+                          onClick={() => updateParam(spec.key, fState.projectValue)}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
+                            String(roadParams?.[spec.key]) === String(fState.projectValue)
+                              ? 'bg-[#22B7C9]/20 text-[#22B7C9] border-[#22B7C9]/50'
+                              : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
+                          }`}
+                        >
+                          Dự án: {fState.projectValue}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
 
           {/* Computed Slab Dimension Preview Strip */}
@@ -1826,6 +2175,28 @@ export default function Sidebar({
             Tự động dò tìm &amp; điền sẵn từ bản vẽ DXF khi có căn cứ rõ ràng. Kỹ sư có thể xác nhận, chỉnh sửa hoặc nhập bổ sung (tách biệt với cấu hình chia tấm trên bản đồ).
           </p>
 
+          {/* Missing Fields Indicator / Complete Banner for Section 4 */}
+          {missingSec4Fields.length > 0 ? (
+            <div
+              data-testid="missing-btxm-alert"
+              className="p-2.5 rounded-md bg-[#EF4444]/10 border border-[#EF4444]/40 text-[11.5px] text-[#FCA5A5] flex items-center gap-2"
+            >
+              <AlertTriangle className="w-4 h-4 text-[#EF4444] shrink-0" />
+              <div className="leading-snug">
+                Chưa có dữ liệu ở cả 2 nguồn, cần bổ sung:{' '}
+                <strong>{missingSec4Fields.map((s) => s.label).join(', ')}</strong>
+              </div>
+            </div>
+          ) : (
+            <div
+              data-testid="complete-btxm-banner"
+              className="p-2 rounded-md bg-[#22C55E]/10 border border-[#22C55E]/30 text-[11px] text-[#4ADE80] flex items-center gap-1.5"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-[#4ADE80] shrink-0" />
+              <span>Đã đủ 4 thông số BTXM (DXF &amp; Dự án)</span>
+            </div>
+          )}
+
           {dxfBtxmExtraction?.isDxf && (
             <div
               data-testid="btxm-dxf-scan-banner"
@@ -1878,9 +2249,11 @@ export default function Sidebar({
             {PAVEMENT_DESIGN_FIELD_SPECS.map((spec) => {
               const rawVal = roadParams?.[spec.key] ?? ''
               const fieldState = normalizedParams.pavementDesign?.fields?.[spec.key]
-              const dxfEvidence = fieldState?.dxfEvidence || null
+              const fState = sec4FieldStates[spec.key] || {}
+              const dxfEvidence = fState?.dxfEvidence || fieldState?.dxfEvidence || null
               const isInvalid = Boolean(fieldState && !fieldState.valid)
-              const isAutoFilled = fieldState?.provenance === 'AUTO_FILLED_FROM_DXF'
+              const isAutoFilled = fState?.source === 'FROM_DXF'
+              const isFromProject = fState?.source === 'FROM_PROJECT'
               const isAmbiguousEmpty =
                 fieldState?.provenance === 'EMPTY_MULTIPLE_VALUES' ||
                 fieldState?.provenance === 'EMPTY_AMBIGUOUS_DIMLFAC' ||
@@ -1901,23 +2274,27 @@ export default function Sidebar({
                     </label>
                     <span
                       data-testid={`btxm-status-badge-${spec.key}`}
-                      data-status={dxfEvidence?.status || 'NO_DXF'}
-                      data-provenance={fieldState?.provenance || 'EMPTY_NO_DXF'}
+                      data-status={dxfEvidence?.status || (isFromProject ? 'FROM_PROJECT' : 'NO_DXF')}
+                      data-provenance={fState?.source || fieldState?.provenance || 'EMPTY_NO_DXF'}
                       className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ${
-                        isAutoFilled
+                        fState?.sourceBadgeClass ||
+                        (isAutoFilled
                           ? 'bg-[#22C55E]/15 text-[#4ADE80] border-[#22C55E]/40'
+                          : isFromProject
+                          ? 'bg-[#22B7C9]/15 text-[#22B7C9] border-[#22B7C9]/40'
                           : isAmbiguousEmpty
                           ? 'bg-[#F59E0B]/15 text-[#FBBF24] border-[#F59E0B]/40'
                           : fieldState?.isProvided
                           ? 'bg-[#22B7C9]/15 text-[#22B7C9] border-[#22B7C9]/40'
-                          : 'bg-[#17263C] text-[#8FA3BA] border-[#27384E]'
+                          : 'bg-[#17263C] text-[#8FA3BA] border-[#27384E]')
                       }`}
                     >
-                      {dxfEvidence
-                        ? fieldState?.provenanceLabel || dxfEvidence.statusLabel
-                        : fieldState?.isProvided
-                        ? 'Nhập thủ công'
-                        : 'Chưa có dữ liệu'}
+                      {fState?.sourceLabel ||
+                        (dxfEvidence
+                          ? fieldState?.provenanceLabel || dxfEvidence.statusLabel
+                          : fieldState?.isProvided
+                          ? 'Nhập thủ công'
+                          : 'Chưa có dữ liệu')}
                     </span>
                   </div>
 
@@ -1934,8 +2311,12 @@ export default function Sidebar({
                       className={`w-full pl-2.5 pr-9 py-1.5 rounded-md bg-[#0B1220] border text-[13px] font-mono font-bold tabular-nums text-[#E8EEF6] placeholder-[#7E92AA]/60 focus:outline-none ${
                         isInvalid
                           ? 'border-[#EF4444] focus:border-[#EF4444] text-[#FCA5A5]'
+                          : fState?.hasConflict
+                          ? 'border-[#F59E0B]/60 focus:border-[#F59E0B]'
                           : isAutoFilled
                           ? 'border-[#22C55E]/60 focus:border-[#22B7C9]'
+                          : isFromProject
+                          ? 'border-[#22B7C9]/60 focus:border-[#22B7C9]'
                           : isAmbiguousEmpty
                           ? 'border-[#F59E0B]/60 focus:border-[#22B7C9]'
                           : 'border-[#27384E] focus:border-[#22B7C9]'
@@ -1945,6 +2326,45 @@ export default function Sidebar({
                       {spec.unit}
                     </span>
                   </div>
+
+                  {/* Conflict Box if DXF and Project differ */}
+                  {fState?.hasConflict && (
+                    <div
+                      data-testid={`conflict-alert-${spec.key}`}
+                      className="p-1.5 rounded bg-[#F59E0B]/10 border border-[#F59E0B]/40 space-y-1 text-[10.5px]"
+                    >
+                      <div className="flex items-center gap-1 text-[#FBBF24] font-medium leading-tight">
+                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                        <span>DXF ({fState.dxfValue} {spec.unit}) ≠ Dự án ({fState.projectValue} {spec.unit})</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          data-testid={`use-dxf-btn-${spec.key}`}
+                          onClick={() => updateParam(spec.key, fState.dxfValue)}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
+                            String(rawVal) === String(fState.dxfValue)
+                              ? 'bg-[#22C55E]/20 text-[#4ADE80] border-[#22C55E]/50'
+                              : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
+                          }`}
+                        >
+                          Dùng DXF: {fState.dxfValue}
+                        </button>
+                        <button
+                          type="button"
+                          data-testid={`use-proj-btn-${spec.key}`}
+                          onClick={() => updateParam(spec.key, fState.projectValue)}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
+                            String(rawVal) === String(fState.projectValue)
+                              ? 'bg-[#22B7C9]/20 text-[#22B7C9] border-[#22B7C9]/50'
+                              : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
+                          }`}
+                        >
+                          Dùng Dự án: {fState.projectValue}
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {dxfEvidence ? (
                     <div
@@ -1977,11 +2397,6 @@ export default function Sidebar({
                         <div className="text-[#FBBF24]">
                           <span className="font-semibold">Căn cứ DXF (Thiếu đơn vị): </span>
                           <span>{dxfEvidence.summaryText}</span>
-                        </div>
-                      )}
-                      {dxfEvidence.status === 'NOT_FOUND' && (
-                        <div className="text-[#7E92AA] font-mono text-[10.5px]">
-                          Chưa có dữ liệu trong DXF • Quy tắc: {spec.ruleText}
                         </div>
                       )}
                     </div>
@@ -2079,6 +2494,16 @@ export default function Sidebar({
           </button>
         )}
       </div>
+
+      {/* ── Project Profiles Management Modal ── */}
+      <ProjectProfileModal
+        isOpen={isProjectModalOpen}
+        onClose={() => setIsProjectModalOpen(false)}
+        profiles={projectProfiles}
+        activeProjectId={activeProjectId}
+        onSelectProject={handleSelectProject}
+        onSaveProfiles={handleSaveProfiles}
+      />
     </aside>
   )
 }
