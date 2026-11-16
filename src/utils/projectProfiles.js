@@ -218,16 +218,17 @@ export function saveProjectProfiles(profiles) {
 
 /**
  * Gets currently active project ID.
+ * Returns empty string ('') by default on fresh start so engineer actively selects a profile.
  */
 export function getActiveProjectId() {
-  if (typeof window === 'undefined') return DEFAULT_PROJECT_PROFILES[0].id
+  if (typeof window === 'undefined') return ''
   try {
     const saved = localStorage.getItem(STORAGE_KEY_ACTIVE_PROJECT)
-    if (saved) return saved
+    if (saved !== null && saved !== undefined) return saved
   } catch (e) {
     // ignore
   }
-  return DEFAULT_PROJECT_PROFILES[0].id
+  return ''
 }
 
 /**
@@ -236,7 +237,7 @@ export function getActiveProjectId() {
 export function saveActiveProjectId(id) {
   if (typeof window === 'undefined') return
   try {
-    localStorage.setItem(STORAGE_KEY_ACTIVE_PROJECT, id)
+    localStorage.setItem(STORAGE_KEY_ACTIVE_PROJECT, id || '')
   } catch (e) {
     // ignore
   }
@@ -246,8 +247,12 @@ export function saveActiveProjectId(id) {
  * Resolves effective state for a single parameter field based on:
  *   1. Engineer manual edit (dirty in current drawing session)
  *   2. Priority 1: Authentic DXF extraction with clear evidence
- *   3. Priority 2: Confirmed active Project Profile
+ *   3. Priority 2: Confirmed active Project Profile (or Template if explicitly chosen for testing)
  *   4. Missing in both -> Blank & flagged
+ *
+ * Safety guarantees:
+ *   - Real project profiles (isTemplate: false) only supply values if officially confirmed (confirmedAt & confirmedBy).
+ *   - Template profiles clearly designate their source as sample ('Từ hồ sơ mẫu: ...').
  */
 export function resolveParameterFieldState({
   key,
@@ -258,6 +263,8 @@ export function resolveParameterFieldState({
   projectVal = null,
   projectName = '',
   projectCode = '',
+  isTemplate = false,
+  isConfirmed = false,
 }) {
   const hasDxf = Boolean(
     dxfExtractedVal !== null &&
@@ -268,12 +275,22 @@ export function resolveParameterFieldState({
   )
   const cleanDxf = hasDxf ? String(dxfExtractedVal).trim() : null
 
+  // Production project profiles only supply numbers if officially confirmed
+  const isProjectEligible = Boolean(isTemplate || isConfirmed)
   const hasProject = Boolean(
+    isProjectEligible &&
     projectVal !== null &&
     projectVal !== undefined &&
     String(projectVal).trim() !== ''
   )
   const cleanProject = hasProject ? String(projectVal).trim() : null
+
+  const getProjectSourceLabel = () => {
+    if (isTemplate) {
+      return projectCode ? `Từ hồ sơ mẫu: ${projectCode}` : `Từ mẫu: ${projectName}`
+    }
+    return projectCode ? `Từ dự án: ${projectCode}` : `Từ dự án: ${projectName}`
+  }
 
   const isMultipleDxf = Boolean(dxfEvidence && dxfEvidence.status === 'MULTIPLE_VALUES')
   const dxfCandidates = isMultipleDxf && Array.isArray(dxfEvidence.candidates) ? dxfEvidence.candidates : []
@@ -318,7 +335,7 @@ export function resolveParameterFieldState({
   if (isMultipleDxf) {
     const fallbackValue = hasProject ? cleanProject : ''
     const fallbackLabel = hasProject
-      ? (projectCode ? `Từ dự án: ${projectCode}` : `Từ dự án: ${projectName}`)
+      ? getProjectSourceLabel()
       : 'Nhiều giá trị trong DXF'
     return {
       value: fallbackValue,
@@ -358,9 +375,9 @@ export function resolveParameterFieldState({
     }
   }
 
-  // 4. Priority 2: Confirmed Project Profile
+  // 4. Priority 2: Confirmed Project Profile (or Template if chosen)
   if (hasProject) {
-    const label = projectCode ? `Từ dự án: ${projectCode}` : `Từ dự án: ${projectName}`
+    const label = getProjectSourceLabel()
     return {
       value: cleanProject,
       source: 'FROM_PROJECT',

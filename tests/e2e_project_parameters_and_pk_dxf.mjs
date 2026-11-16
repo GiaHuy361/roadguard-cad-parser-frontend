@@ -171,9 +171,9 @@ async function run() {
     })()`)
     console.log('Initial project state:', initialProjectState)
     assert.strictEqual(initialProjectState.hasSelect, true, 'Project select dropdown must exist')
-    assert.strictEqual(initialProjectState.activeValue, 'project-bao-loc-dt725', 'Default project must be Bảo Lộc DT725')
-    assert.ok(initialProjectState.optionsCount >= 3, 'Must have at least 3 project profiles')
-    assert.ok(initialProjectState.summaryText.includes('B=7'), 'Summary must reflect B=7m')
+    assert.strictEqual(initialProjectState.activeValue, '', 'Initial project must be unselected on fresh open')
+    assert.ok(initialProjectState.optionsCount >= 4, 'Must have at least placeholder + 3 project profiles')
+    assert.ok(initialProjectState.summaryText.includes('Chưa chọn hồ sơ dự án'), 'Summary must reflect unselected state')
     assert.ok(initialProjectState.optgroups.some(g => g.includes('mẫu') || g.includes('kiểm thử')), 'Must have optgroup for template/sample profiles')
 
     // Open Project Management Modal to verify template separation & new project start empty
@@ -197,15 +197,17 @@ async function run() {
     const newProjectState = await evalJs(`(() => {
       const modal = document.querySelector('[data-testid="project-profile-modal"]')
       const rwInput = modal?.querySelector('input[placeholder="Để trống nếu chưa xác nhận"]')
-      const confirmBadge = modal?.querySelector('span.border')
+      const confirmBtn = document.querySelector('[data-testid="confirm-dossier-btn"]')
       return {
         rwVal: rwInput?.value || '',
         modalTxt: modal?.innerText || '',
+        confirmBtnDisabled: confirmBtn?.disabled,
       }
     })()`)
     console.log('New project empty state:', newProjectState)
     assert.strictEqual(newProjectState.rwVal, '', 'New project must start with EMPTY parameters')
     assert.ok(newProjectState.modalTxt.includes('Chưa có xác nhận thực tế'), 'New project must start unconfirmed')
+    assert.strictEqual(newProjectState.confirmBtnDisabled, true, 'Confirm button must be disabled when engineer name is empty')
 
     // Test confirmation operation with engineer name
     console.log('Performing actual confirmation on new project...')
@@ -230,6 +232,43 @@ async function run() {
     })()`)
     console.log('Project after confirmation:', confirmedState)
     assert.ok(confirmedState.modalTxt.includes('KS. Nguyễn Văn Thực Tế'), 'Must record confirmedBy only after actual confirmation action')
+
+    // Test modifying a parameter resets confirmation
+    console.log('Testing parameter modification resets confirmation...')
+    await evalJs(`(() => {
+      const modal = document.querySelector('[data-testid="project-profile-modal"]')
+      const rwInput = modal?.querySelector('input[placeholder="Để trống nếu chưa xác nhận"]')
+      if (rwInput) {
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+        nativeSetter.call(rwInput, '8.5')
+        rwInput.dispatchEvent(new Event('input', { bubbles: true }))
+        rwInput.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+    })()`)
+    await sleep(400)
+
+    const stateAfterParamChange = await evalJs(`(() => {
+      const modal = document.querySelector('[data-testid="project-profile-modal"]')
+      return {
+        modalTxt: modal?.innerText || '',
+      }
+    })()`)
+    console.log('State after parameter edit:', stateAfterParamChange)
+    assert.ok(stateAfterParamChange.modalTxt.includes('Chưa có xác nhận thực tế'), 'Modifying technical parameter must reset confirmation info')
+
+    // Re-confirm before closing
+    await evalJs(`(() => {
+      const input = document.querySelector('[data-testid="engineer-name-input"]')
+      if (input) {
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+        nativeSetter.call(input, 'KS. Nguyễn Văn Thực Tế')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+      const confirmBtn = document.querySelector('[data-testid="confirm-dossier-btn"]')
+      if (confirmBtn) confirmBtn.click()
+    })()`)
+    await sleep(500)
 
     // Close modal and ensure active project is Bảo Lộc DT725 for Suite 2
     console.log('Closing modal and ensuring active project is Bảo Lộc DT725...')

@@ -218,11 +218,8 @@ export default function Sidebar({
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false)
 
   const activeProject = useMemo(() => {
-    return (
-      projectProfiles.find((p) => p.id === activeProjectId) ||
-      projectProfiles[0] ||
-      DEFAULT_PROJECT_PROFILES[0]
-    )
+    if (!activeProjectId) return null
+    return projectProfiles.find((p) => p.id === activeProjectId) || null
   }, [projectProfiles, activeProjectId])
 
   const projectProfilesRef = useRef(projectProfiles)
@@ -240,9 +237,12 @@ export default function Sidebar({
   const handleSelectProject = (newProjectId) => {
     setActiveProjectId(newProjectId)
     saveActiveProjectId(newProjectId)
-    const newProj =
-      projectProfiles.find((p) => p.id === newProjectId) || projectProfiles[0]
-    if (!newProj) return
+    const newProj = newProjectId
+      ? projectProfiles.find((p) => p.id === newProjectId) || null
+      : null
+    const isEligible = Boolean(
+      newProj && (newProj.isTemplate || (newProj.confirmedBy && newProj.confirmedAt))
+    )
 
     const dirtySet = dirtyFieldsForCurrentScanRef.current || new Set()
     setRoadParams((prev) => {
@@ -254,7 +254,7 @@ export default function Sidebar({
         if (dxfVal !== undefined && dxfVal !== null && String(dxfVal).trim() !== '') {
           return String(dxfVal)
         }
-        if (projVal !== undefined && projVal !== null && String(projVal).trim() !== '') {
+        if (isEligible && projVal !== undefined && projVal !== null && String(projVal).trim() !== '') {
           return String(projVal)
         }
         return ''
@@ -265,47 +265,49 @@ export default function Sidebar({
         roadWidth: getEffective(
           'roadWidth',
           geomInputs.roadWidth,
-          newProj.params?.roadWidth
+          newProj?.params?.roadWidth
         ),
         laneCount: getEffective(
           'laneCount',
           geomInputs.laneCount,
-          newProj.params?.laneCount
+          newProj?.params?.laneCount
         ),
         segmentLength: getEffective(
           'segmentLength',
           geomInputs.segmentLength,
-          newProj.params?.segmentLength
+          newProj?.params?.segmentLength
         ),
         slabLength: getEffective(
           'slabLength',
           geomInputs.slabLength,
-          newProj.params?.slabLength
+          newProj?.params?.slabLength
         ),
         slabThicknessCentimeters: getEffective(
           'slabThicknessCentimeters',
           btxmInputs.slabThicknessCentimeters,
-          newProj.params?.slabThicknessCentimeters
+          newProj?.params?.slabThicknessCentimeters
         ),
         contractionJointSpacingMeters: getEffective(
           'contractionJointSpacingMeters',
           btxmInputs.contractionJointSpacingMeters,
-          newProj.params?.contractionJointSpacingMeters
+          newProj?.params?.contractionJointSpacingMeters
         ),
         expansionJointSpacingMeters: getEffective(
           'expansionJointSpacingMeters',
           btxmInputs.expansionJointSpacingMeters,
-          newProj.params?.expansionJointSpacingMeters
+          newProj?.params?.expansionJointSpacingMeters
         ),
         expansionJointGapMillimeters: getEffective(
           'expansionJointGapMillimeters',
           btxmInputs.expansionJointGapMillimeters,
-          newProj.params?.expansionJointGapMillimeters
+          newProj?.params?.expansionJointGapMillimeters
         ),
       }
     })
 
-    toast.success(`Đã áp dụng bộ thông số dự án: ${newProj.name}`)
+    if (newProj) {
+      toast.success(`Đã áp dụng bộ thông số dự án: ${newProj.name}`)
+    }
   }
 
   const handleSaveProfiles = (updatedProfiles) => {
@@ -415,12 +417,16 @@ export default function Sidebar({
           return ''
         }
 
-        const currentActiveProj =
-          projectProfilesRef.current.find(
-            (p) => p.id === activeProjectIdRef.current
-          ) ||
-          projectProfilesRef.current[0] ||
-          DEFAULT_PROJECT_PROFILES[0]
+        const currentActiveProj = activeProjectIdRef.current
+          ? projectProfilesRef.current.find(
+              (p) => p.id === activeProjectIdRef.current
+            ) || null
+          : null
+        const isEligible = Boolean(
+          currentActiveProj &&
+          (currentActiveProj.isTemplate ||
+            (currentActiveProj.confirmedBy && currentActiveProj.confirmedAt))
+        )
 
         setRoadParams((prev) => {
           const next = { ...prev }
@@ -430,56 +436,56 @@ export default function Sidebar({
           const rw = getEffectiveVal(
             'roadWidth',
             geomInputs.roadWidth,
-            currentActiveProj.params?.roadWidth
+            isEligible ? currentActiveProj?.params?.roadWidth : undefined
           )
           if (rw !== undefined) next.roadWidth = rw
 
           const lc = getEffectiveVal(
             'laneCount',
             geomInputs.laneCount,
-            currentActiveProj.params?.laneCount
+            isEligible ? currentActiveProj?.params?.laneCount : undefined
           )
           if (lc !== undefined) next.laneCount = lc
 
           const sl = getEffectiveVal(
             'segmentLength',
             geomInputs.segmentLength,
-            currentActiveProj.params?.segmentLength
+            isEligible ? currentActiveProj?.params?.segmentLength : undefined
           )
           if (sl !== undefined) next.segmentLength = sl
 
           const sb = getEffectiveVal(
             'slabLength',
             geomInputs.slabLength,
-            currentActiveProj.params?.slabLength
+            isEligible ? currentActiveProj?.params?.slabLength : undefined
           )
           if (sb !== undefined) next.slabLength = sb
 
           const st = getEffectiveVal(
             'slabThicknessCentimeters',
             btxmInputs.slabThicknessCentimeters,
-            currentActiveProj.params?.slabThicknessCentimeters
+            isEligible ? currentActiveProj?.params?.slabThicknessCentimeters : undefined
           )
           if (st !== undefined) next.slabThicknessCentimeters = st
 
           const cj = getEffectiveVal(
             'contractionJointSpacingMeters',
             btxmInputs.contractionJointSpacingMeters,
-            currentActiveProj.params?.contractionJointSpacingMeters
+            isEligible ? currentActiveProj?.params?.contractionJointSpacingMeters : undefined
           )
           if (cj !== undefined) next.contractionJointSpacingMeters = cj
 
           const ej = getEffectiveVal(
             'expansionJointSpacingMeters',
             btxmInputs.expansionJointSpacingMeters,
-            currentActiveProj.params?.expansionJointSpacingMeters
+            isEligible ? currentActiveProj?.params?.expansionJointSpacingMeters : undefined
           )
           if (ej !== undefined) next.expansionJointSpacingMeters = ej
 
           const eg = getEffectiveVal(
             'expansionJointGapMillimeters',
             btxmInputs.expansionJointGapMillimeters,
-            currentActiveProj.params?.expansionJointGapMillimeters
+            isEligible ? currentActiveProj?.params?.expansionJointGapMillimeters : undefined
           )
           if (eg !== undefined) next.expansionJointGapMillimeters = eg
 
@@ -1404,9 +1410,11 @@ export default function Sidebar({
         isUserDirty: dirtySet.has(spec.key),
         dxfExtractedVal: geomInputs[spec.key],
         dxfEvidence: geomFields[spec.key],
-        projectVal: activeProject.params?.[spec.key],
-        projectName: activeProject.name,
-        projectCode: activeProject.code,
+        projectVal: activeProject?.params?.[spec.key],
+        projectName: activeProject?.name || '',
+        projectCode: activeProject?.code || '',
+        isTemplate: Boolean(activeProject?.isTemplate),
+        isConfirmed: Boolean(activeProject?.confirmedBy && activeProject?.confirmedAt),
       })
     }
     return states
@@ -1432,9 +1440,11 @@ export default function Sidebar({
         isUserDirty: dirtySet.has(spec.key),
         dxfExtractedVal: btxmInputs[spec.key],
         dxfEvidence: btxmFields[spec.key],
-        projectVal: activeProject.params?.[spec.key],
-        projectName: activeProject.name,
-        projectCode: activeProject.code,
+        projectVal: activeProject?.params?.[spec.key],
+        projectName: activeProject?.name || '',
+        projectCode: activeProject?.code || '',
+        isTemplate: Boolean(activeProject?.isTemplate),
+        isConfirmed: Boolean(activeProject?.confirmedBy && activeProject?.confirmedAt),
       })
     }
     return states
@@ -1501,6 +1511,7 @@ export default function Sidebar({
                 onChange={(e) => handleSelectProject(e.target.value)}
                 className="w-full pl-2.5 pr-8 py-1.5 rounded-md bg-[#111D2E] border border-[#27384E] text-[12px] font-medium text-[#E8EEF6] focus:border-[#22B7C9] focus:outline-none cursor-pointer"
               >
+                <option value="">-- Chưa chọn hồ sơ dự án --</option>
                 {projectProfiles.filter((p) => !p.isTemplate).length > 0 && (
                   <optgroup label="📁 Hồ sơ dự án dùng thật">
                     {projectProfiles
@@ -1525,31 +1536,47 @@ export default function Sidebar({
             </div>
 
             {/* Quick Param Summary Strip */}
-            <div className="px-2.5 py-1.5 rounded bg-[#0B1220] border border-[#1E2E42] flex items-center justify-between text-[11px]">
-              <span className="text-[#8FA3BA]">Hồ sơ chuẩn:</span>
-              <span className="font-mono text-[#22B7C9] font-medium">
-                B={activeProject.params?.roadWidth || '-'}m • Cọc={activeProject.params?.segmentLength || '-'}m • Dày={activeProject.params?.slabThicknessCentimeters || '-'}cm
-              </span>
-            </div>
-
-            {/* Explicit Button to adopt project CRS if different from current engineer's selection */}
-            {activeProject.crs?.centralMeridian &&
-              Math.abs(Number(activeProject.crs.centralMeridian) - Number(selectedCm)) > 1e-4 && (
-                <button
-                  type="button"
-                  data-testid="apply-project-crs-btn"
-                  onClick={() => {
-                    setSelectedCm(String(activeProject.crs.centralMeridian))
-                    toast.success(
-                      `Đã áp dụng kinh tuyến trục L₀ = ${activeProject.crs.centralMeridian}° từ hồ sơ dự án`
-                    )
-                  }}
-                  className="w-full px-2 py-1 rounded bg-[#22B7C9]/15 hover:bg-[#22B7C9]/25 text-[#22B7C9] text-[11px] font-semibold border border-[#22B7C9]/40 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <Building2 className="w-3 h-3 shrink-0" />
-                  <span>Áp dụng L₀ = {activeProject.crs.centralMeridian}° từ hồ sơ dự án</span>
-                </button>
-              )}
+            {!activeProject ? (
+              <div className="px-2.5 py-1.5 rounded bg-[#0B1220] border border-[#1E2E42] flex items-center justify-between text-[11px] text-[#8FA3BA]">
+                <span>Chưa chọn hồ sơ dự án</span>
+                <span className="italic text-[10px]">Chỉ tự điền khi chọn/tạo hồ sơ</span>
+              </div>
+            ) : (
+              <>
+                <div className="px-2.5 py-1.5 rounded bg-[#0B1220] border border-[#1E2E42] flex items-center justify-between text-[11px]">
+                  <span className="text-[#8FA3BA]">
+                    {activeProject.isTemplate ? 'Hồ sơ mẫu chuẩn:' : 'Hồ sơ kỹ thuật:'}
+                  </span>
+                  <span className="font-mono text-[#22B7C9] font-medium">
+                    B={activeProject.params?.roadWidth || '-'}m • Cọc={activeProject.params?.segmentLength || '-'}m • Dày={activeProject.params?.slabThicknessCentimeters || '-'}cm
+                  </span>
+                </div>
+                {!activeProject.isTemplate && !(activeProject.confirmedBy && activeProject.confirmedAt) && (
+                  <div className="px-2 py-1 rounded bg-[#F59E0B]/10 border border-[#F59E0B]/30 text-[10.5px] text-[#FBBF24] flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[#F59E0B]" />
+                    <span>Hồ sơ chưa xác nhận (cần xác nhận trong Quản lý để cấp số tự điền)</span>
+                  </div>
+                )}
+                {/* Explicit Button to adopt project CRS if different from current engineer's selection */}
+                {activeProject.crs?.centralMeridian &&
+                  Math.abs(Number(activeProject.crs.centralMeridian) - Number(selectedCm)) > 1e-4 && (
+                    <button
+                      type="button"
+                      data-testid="apply-project-crs-btn"
+                      onClick={() => {
+                        setSelectedCm(String(activeProject.crs.centralMeridian))
+                        toast.success(
+                          `Đã áp dụng kinh tuyến trục L₀ = ${activeProject.crs.centralMeridian}° từ hồ sơ dự án`
+                        )
+                      }}
+                      className="w-full px-2 py-1 rounded bg-[#22B7C9]/15 hover:bg-[#22B7C9]/25 text-[#22B7C9] text-[11px] font-semibold border border-[#22B7C9]/40 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Building2 className="w-3 h-3 shrink-0" />
+                      <span>Áp dụng L₀ = {activeProject.crs.centralMeridian}° từ hồ sơ dự án</span>
+                    </button>
+                  )}
+              </>
+            )}
           </div>
         </section>
 

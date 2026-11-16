@@ -51,6 +51,8 @@ export default function ProjectProfileModal({
     if (!editingProfile) return
     setEditingProfile((prev) => ({
       ...prev,
+      confirmedAt: null,
+      confirmedBy: null,
       params: {
         ...prev.params,
         [field]: val,
@@ -135,11 +137,14 @@ export default function ProjectProfileModal({
       name: `${editingProfile.name} (Bản sao)`,
       code: `${editingProfile.code}-COPY`,
       isTemplate: false,
+      confirmedAt: null,
+      confirmedBy: null,
     }
     const updated = [...profiles, duplicated]
     onSaveProfiles(updated)
     setSelectedEditId(newId)
     setEditingProfile(duplicated)
+    setEngineerNameInput('')
     setHasChanges(false)
   }
 
@@ -441,8 +446,13 @@ export default function ProjectProfileModal({
                   <button
                     type="button"
                     data-testid="confirm-dossier-btn"
+                    disabled={!engineerNameInput.trim()}
                     onClick={() => {
-                      const name = engineerNameInput.trim() || 'Kỹ sư dự án'
+                      const name = engineerNameInput.trim()
+                      if (!name) {
+                        alert('Vui lòng nhập họ tên hoặc chức vụ kỹ sư xác nhận trước khi lưu.')
+                        return
+                      }
                       const today = new Date().toISOString().slice(0, 10)
                       const updatedProf = { ...editingProfile, confirmedBy: name, confirmedAt: today }
                       setEditingProfile(updatedProf)
@@ -450,7 +460,11 @@ export default function ProjectProfileModal({
                       onSaveProfiles(updatedList)
                       setHasChanges(false)
                     }}
-                    className="px-3.5 py-1.5 rounded-md bg-[#39B58A] hover:bg-[#2EA37A] text-[#0B1220] font-bold text-[12px] cursor-pointer whitespace-nowrap"
+                    className={`px-3.5 py-1.5 rounded-md font-bold text-[12px] whitespace-nowrap transition-colors ${
+                      engineerNameInput.trim()
+                        ? 'bg-[#39B58A] hover:bg-[#2EA37A] text-[#0B1220] cursor-pointer'
+                        : 'bg-[#1E2E42] text-[#8FA3BA] cursor-not-allowed border border-[#27384E]'
+                    }`}
                   >
                     Xác nhận hồ sơ
                   </button>

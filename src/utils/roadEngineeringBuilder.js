@@ -335,8 +335,10 @@ export const PAVEMENT_DESIGN_FIELD_SPECS = [
     shortLabel: 'Chiều dày tấm BTXM',
     unit: 'cm',
     allowZero: false,
-    ruleText: 'Lớn hơn 0 nếu nhập',
-    description: 'Theo hồ sơ thiết kế của tuyến (slabThicknessCentimeters, lớn hơn 0 nếu nhập)',
+    min: 10,
+    max: 50,
+    ruleText: 'Từ 10 đến 50 cm',
+    description: 'Theo hồ sơ thiết kế của tuyến (slabThicknessCentimeters, từ 10 đến 50 cm)',
   },
   {
     key: 'contractionJointSpacingMeters',
@@ -344,8 +346,10 @@ export const PAVEMENT_DESIGN_FIELD_SPECS = [
     shortLabel: 'Cự ly khe co',
     unit: 'm',
     allowZero: false,
-    ruleText: 'Lớn hơn 0 nếu nhập',
-    description: 'Theo hồ sơ thiết kế của tuyến (contractionJointSpacingMeters, lớn hơn 0 nếu nhập)',
+    min: 1.5,
+    max: 20.0,
+    ruleText: 'Từ 1.5 đến 20 m',
+    description: 'Theo hồ sơ thiết kế của tuyến (contractionJointSpacingMeters, từ 1.5 đến 20 m)',
   },
   {
     key: 'expansionJointSpacingMeters',
@@ -353,8 +357,10 @@ export const PAVEMENT_DESIGN_FIELD_SPECS = [
     shortLabel: 'Cự ly khe giãn',
     unit: 'm',
     allowZero: false,
-    ruleText: 'Lớn hơn 0 nếu nhập',
-    description: 'Theo hồ sơ thiết kế của tuyến (expansionJointSpacingMeters, lớn hơn 0 nếu nhập)',
+    min: 10.0,
+    max: 500.0,
+    ruleText: 'Từ 10 đến 500 m',
+    description: 'Theo hồ sơ thiết kế của tuyến (expansionJointSpacingMeters, từ 10 đến 500 m)',
   },
   {
     key: 'expansionJointGapMillimeters',
@@ -362,8 +368,10 @@ export const PAVEMENT_DESIGN_FIELD_SPECS = [
     shortLabel: 'Độ hở khe giãn',
     unit: 'mm',
     allowZero: true,
-    ruleText: 'Từ 0 trở lên nếu nhập',
-    description: 'Theo hồ sơ thiết kế của tuyến (expansionJointGapMillimeters, từ 0 trở lên nếu nhập)',
+    min: 0,
+    max: 100,
+    ruleText: 'Từ 0 đến 100 mm',
+    description: 'Theo hồ sơ thiết kế của tuyến (expansionJointGapMillimeters, từ 0 đến 100 mm)',
   },
 ]
 
@@ -433,6 +441,8 @@ export function convertBtxmUnit(numericValue, rawUnit, targetUnit) {
     mm: 1,
     cm: 10,
     m: 1000,
+    mét: 1000,
+    met: 1000,
   }
   if (!(uFrom in factorsToMm) || !(uTo in factorsToMm)) return null
   const inMm = num * factorsToMm[uFrom]
@@ -449,6 +459,8 @@ const BTXM_FIELD_MATCHERS = {
     key: 'slabThicknessCentimeters',
     targetUnit: 'cm',
     allowZero: false,
+    min: 10,
+    max: 50,
     matchesClause(asciiClause) {
       if (BTXM_CLAUSE_EXCLUSION_SLAB.test(asciiClause)) return false
       return (
@@ -467,6 +479,8 @@ const BTXM_FIELD_MATCHERS = {
     key: 'contractionJointSpacingMeters',
     targetUnit: 'm',
     allowZero: false,
+    min: 1.5,
+    max: 20.0,
     matchesClause(asciiClause) {
       if (/\b(?:do\s*ho|be\s*rong|chieu\s*rong|khe\s*ho|chieu\s*sau|cat\s*sau)\s*khe\s*co\b/.test(asciiClause)) {
         return false
@@ -487,6 +501,8 @@ const BTXM_FIELD_MATCHERS = {
     key: 'expansionJointSpacingMeters',
     targetUnit: 'm',
     allowZero: false,
+    min: 10.0,
+    max: 500.0,
     matchesClause(asciiClause) {
       if (/\b(?:do\s*ho|be\s*rong|chieu\s*rong|khe\s*ho|do\s*rong|chieu\s*sau)\s*khe\s*gian\b/.test(asciiClause)) {
         return false
@@ -506,6 +522,8 @@ const BTXM_FIELD_MATCHERS = {
     key: 'expansionJointGapMillimeters',
     targetUnit: 'mm',
     allowZero: true,
+    min: 0,
+    max: 100,
     matchesClause(asciiClause) {
       return (
         /(?:do\s*ho|be\s*rong|chieu\s*rong|khe\s*ho|do\s*rong)\s*(?:cua\s*)?khe\s*gian\b/.test(
@@ -531,6 +549,7 @@ function stripNonDimensionTokens(clauseText) {
     .replace(/\b(?:tcvn|tcxdvn|22tcn)\s*[\d:.\-]+/gi, ' ')
     .replace(/\bc\d{1,2}\/\d{1,2}\b/gi, ' ')
     .replace(/\bkm\s*\d+\s*\+\s*\d+(?:[.,]\d+)?/gi, ' ')
+    .replace(/\b\d+(?:[.,]\d+)?\s*(?:m2|m²|m3|m³|cm2|cm²|mm2|mm²)/gi, ' ')
 }
 
 /**
@@ -542,7 +561,7 @@ function parseClauseDimensionCandidates(rawClause, matcher) {
 
   // 1. Check multi-value shorthand with shared trailing unit: e.g. "22 / 25 cm" or "22 - 25 cm" or "4.5 hoặc 5.0 m"
   const multiSharedUnitRegex =
-    /(?:^|[^\w.])([+-]?\d+(?:[.,]\d+)?)\s*(?:\/|÷|-|hoặc|hoac)\s*([+-]?\d+(?:[.,]\d+)?)\s*(mm|cm|m)\b/gi
+    /(?:^|[^\w.])([+-]?\d+(?:[.,]\d+)?)\s*(?:\/|÷|-|hoặc|hoac)\s*([+-]?\d+(?:[.,]\d+)?)\s*(mm|cm|m|mét|met)(?![23²³\w])/gi
   let mShared
   while ((mShared = multiSharedUnitRegex.exec(cleaned)) !== null) {
     const raw1 = mShared[1].replace(',', '.')
@@ -559,7 +578,7 @@ function parseClauseDimensionCandidates(rawClause, matcher) {
   }
 
   // 2. Check explicit number + unit pairs: e.g. "22 cm", "240mm", "4,5 m"
-  const withUnitRegex = /(?:^|[^\w.])([+-]?\d+(?:[.,]\d+)?)\s*(mm|cm|m)\b/gi
+  const withUnitRegex = /(?:^|[^\w.])([+-]?\d+(?:[.,]\d+)?)\s*(mm|cm|m|mét|met)(?![23²³\w])/gi
   let mUnit
   while ((mUnit = withUnitRegex.exec(cleaned)) !== null) {
     const rawNumStr = mUnit[1]
@@ -585,6 +604,8 @@ function parseClauseDimensionCandidates(rawClause, matcher) {
       if (normalizedValue === null) continue
       const passesRule = matcher.allowZero ? normalizedValue >= 0 : normalizedValue > 0
       if (!passesRule) continue
+      if (matcher.min !== undefined && normalizedValue < matcher.min) continue
+      if (matcher.max !== undefined && normalizedValue > matcher.max) continue
       validConverted.push({
         ...item,
         normalizedValue,
@@ -595,16 +616,21 @@ function parseClauseDimensionCandidates(rawClause, matcher) {
     if (validConverted.length > 0) {
       return { kind: 'WITH_UNIT', items: validConverted }
     }
+    // Explicit unit was present but converted value failed engineering limits -> do not treat as unitless
+    return { kind: 'NONE', items: [] }
   }
 
   // 3. Check unitless numeric value after keyword/delimiter: e.g. "Chiều dày tấm BTXM: 22"
-  const bareNumRegex = /(?:[:=]|dày|day|co|giãn|gian|hở|ho|rộng|rong)\s*([+-]?\d+(?:[.,]\d+)?)(?!\s*[a-zA-Z])/i
+  const bareNumRegex = /(?:[:=]|dày|day|co|giãn|gian|hở|ho|rộng|rong)\s*([+-]?\d+(?:[.,]\d+)?)(?!\s*[a-zA-Z23²³])/i
   const mBare = bareNumRegex.exec(cleaned)
   if (mBare) {
     const rawNumStr = mBare[1]
     const num = Number(rawNumStr.replace(',', '.'))
     const passesRule = matcher.allowZero ? num >= 0 : num > 0
-    if (Number.isFinite(num) && passesRule) {
+    const withinLimits =
+      (matcher.min === undefined || num >= matcher.min) &&
+      (matcher.max === undefined || num <= matcher.max)
+    if (Number.isFinite(num) && passesRule && withinLimits) {
       return {
         kind: 'MISSING_UNIT',
         items: [{ rawNumberText: rawNumStr, numericValue: num, rawUnit: null }],
@@ -1048,14 +1074,6 @@ export function extractRoadGeometryParamsFromDxfText(dxfText, fileName = '') {
   if (rawContent.length > 0) {
     const ROAD_GEOM_EXCLUSIONS = /\b(?:suoi|ranh|muong|cong|via\s*he|bo\s*via|ta\s*luy|le\s*duong|ho\s*ga|day\s*cong)\b/i
 
-    const matchers = {
-      roadWidth: /(?:bề\s*rộng\s*(?:mặt\s*(?:đường|tuyến)?|tuyến|xe\s*chạy)|be\s*rong\s*(?:mat\s*(?:duong|tuyen)?|tuyen|xe\s*chay)|chiều\s*rộng\s*mặt\s*(?:đường)?|chieu\s*rong\s*mat\s*(?:duong)?|mặt\s*đường\s*B|mat\s*duong\s*B|B\s*(?:mặt\s*đường|mat\s*duong|mặt))\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met|cm|mm)?/i,
-      // Only extract laneCount when there is explicit evidence of concrete slab strips / pavement lanes
-      laneCount: /(?:số\s*dải\s*(?:tấm|bê\s*tông|mặt\s*đường|btxm)|so\s*dai\s*(?:tam|be\s*tong|mat\s*duong|btxm)|chia\s*thành\s*([1-8])\s*dải\s*(?:tấm|bê\s*tông|btxm)?|([1-8])\s*dải\s*(?:tấm|bê\s*tông|btxm)|dải\s*tấm\s*BTXM)\s*[=:]\s*([1-8])\s*(?:dải|dai|làn|lan)?/i,
-      segmentLength: /(?:bước\s*cọc|buoc\s*coc|cự\s*ly\s*cọc|cu\s*ly\s*coc|khoảng\s*cách\s*cọc|khoang\s*cach\s*coc|chiều\s*dài\s*phân\s*đoạn|chieu\s*dai\s*phan\s*đoan)\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met)?/i,
-      slabLength: /(?:chiều\s*dài\s*tấm|chieu\s*dai\s*tam|dài\s*tấm|dai\s*tam|tấm\s*dài|tam\s*dai)\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met|cm)?/i,
-    }
-
     const lines = rawContent.split(/\r?\n/)
     let currentLayer = '0'
 
@@ -1071,42 +1089,87 @@ export function extractRoadGeometryParamsFromDxfText(dxfText, fileName = '') {
         const decoded = decodeCadText(val)
         if (!decoded || ROAD_GEOM_EXCLUSIONS.test(decoded)) continue
 
-        for (const spec of SECTION_3_FIELD_SPECS) {
-          const regex = matchers[spec.key]
-          const m = regex.exec(decoded)
-          if (m) {
-            if (spec.key === 'laneCount') {
-              const numVal = parseInt(m[3] || m[2] || m[1], 10)
-              if (Number.isFinite(numVal) && numVal >= 1 && numVal <= 8) {
-                fieldFindings[spec.key].withUnitHits.push({
-                  rawQuote: m[0],
-                  rawNumberText: String(numVal),
-                  rawUnit: 'dải',
-                  normalizedValue: numVal,
-                  unitConverted: false,
-                  layer: currentLayer,
-                  positionText: `Layer ${currentLayer}`,
-                })
-              }
-            } else {
-              const rawNum = m[1].replace(',', '.')
+        // 1. Road Width (B): Scan ALL candidates in note, check units, convert first then check limits
+        const isRoadWidthContext =
+          /(?:bề\s*rộng\s*(?:mặt\s*(?:đường|tuyến)?|tuyến|xe\s*chạy)|be\s*rong\s*(?:mat\s*(?:duong|tuyen)?|tuyen|xe\s*chay)|chiều\s*rộng\s*mặt\s*(?:đường)?|chieu\s*rong\s*mat\s*(?:duong)?|mặt\s*đường\s*B|mat\s*duong\s*B|\bB\s*(?:mặt\s*đường|mat\s*duong|mặt))\b/i.test(
+            decoded
+          )
+
+        if (isRoadWidthContext) {
+          const specRw = SECTION_3_FIELD_SPECS.find((s) => s.key === 'roadWidth')
+
+          // Check pair/shorthand in same note: e.g. "B = 7.0m hoặc 8.5m" or "Bề rộng 7.0 / 8.5 m"
+          const pairRegex =
+            /([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met|cm|mm)?(?![23²³\w])\s*(?:\/|÷|-|hoặc|hoac|và|va|,)\s*(?:B\s*[=:]\s*)?([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met|cm|mm)(?![23²³\w])/gi
+          let mPair
+          while ((mPair = pairRegex.exec(decoded)) !== null) {
+            const u2 = mPair[3]?.toLowerCase()
+            const u1 = mPair[2]?.toLowerCase() || u2
+            const items = [
+              { raw: mPair[1], unit: u1 },
+              { raw: mPair[3], unit: u2 },
+            ]
+            for (const it of items) {
+              const rawNum = it.raw.replace(',', '.')
               let num = parseFloat(rawNum)
-              const rawUnit = m[2] ? m[2].toLowerCase() : null
-
-              if (rawUnit) {
-                let unitConverted = false
-                if (rawUnit === 'cm') {
-                  num /= 100
-                  unitConverted = true
-                } else if (rawUnit === 'mm') {
-                  num /= 1000
-                  unitConverted = true
+              if (!Number.isFinite(num)) continue
+              let unitConverted = false
+              if (it.unit === 'cm') {
+                num /= 100
+                unitConverted = true
+              } else if (it.unit === 'mm') {
+                num /= 1000
+                unitConverted = true
+              }
+              if (num >= specRw.min && num <= specRw.max) {
+                const already = fieldFindings.roadWidth.withUnitHits.some(
+                  (h) => Math.abs(h.normalizedValue - num) < 1e-4
+                )
+                if (!already) {
+                  fieldFindings.roadWidth.withUnitHits.push({
+                    rawQuote: mPair[0],
+                    rawNumberText: it.raw,
+                    rawUnit: it.unit,
+                    normalizedValue: num,
+                    unitConverted,
+                    layer: currentLayer,
+                    positionText: `Layer ${currentLayer}`,
+                  })
                 }
+              }
+            }
+          }
 
-                if (Number.isFinite(num) && num >= spec.min && num <= spec.max) {
-                  fieldFindings[spec.key].withUnitHits.push({
-                    rawQuote: m[0],
-                    rawNumberText: m[1],
+          // Check all individual assignments in note: e.g. "B = 7.0m", "B = 8.5m"
+          const rwSingleRegex =
+            /(?:(?:bề\s*rộng\s*(?:mặt\s*(?:đường|tuyến)?|tuyến|xe\s*chạy)|be\s*rong\s*(?:mat\s*(?:duong|tuyen)?|tuyen|xe\s*chay)|chiều\s*rộng\s*mặt\s*(?:đường)?|chieu\s*rong\s*mat\s*(?:duong)?|mặt\s*đường\s*B|mat\s*duong\s*B|\bB\s*(?:mặt\s*đường|mat\s*duong|mặt))\s*[=:]\s*|\bB\s*[=:]\s*)([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met|cm|mm)?(?![23²³\w])/gi
+          let mRw
+          while ((mRw = rwSingleRegex.exec(decoded)) !== null) {
+            const restAfter = decoded.slice(mRw.index + mRw[0].length)
+            if (/^\s*(?:m2|m²|m3|m³|cm2|cm²|mm2|mm²|dải|dai|làn|lan|tấm|tam|kg|tấn|tan)(?!\w)/i.test(restAfter)) {
+              continue
+            }
+            const rawNum = mRw[1].replace(',', '.')
+            let num = parseFloat(rawNum)
+            if (!Number.isFinite(num)) continue
+            const rawUnit = mRw[2] ? mRw[2].toLowerCase() : null
+            if (rawUnit) {
+              let unitConverted = false
+              if (rawUnit === 'cm') {
+                num /= 100
+                unitConverted = true
+              } else if (rawUnit === 'mm') {
+                num /= 1000
+                unitConverted = true
+              }
+              if (num >= specRw.min && num <= specRw.max) {
+                const already = fieldFindings.roadWidth.withUnitHits.some(
+                  (h) => Math.abs(h.normalizedValue - num) < 1e-4
+                )
+                if (!already) {
+                  fieldFindings.roadWidth.withUnitHits.push({
+                    rawQuote: mRw[0],
+                    rawNumberText: mRw[1],
                     rawUnit,
                     normalizedValue: num,
                     unitConverted,
@@ -1114,17 +1177,128 @@ export function extractRoadGeometryParamsFromDxfText(dxfText, fileName = '') {
                     positionText: `Layer ${currentLayer}`,
                   })
                 }
-              } else {
-                // No unit specified
-                if (Number.isFinite(num) && num >= spec.min && num <= spec.max) {
-                  fieldFindings[spec.key].missingUnitHits.push({
-                    rawQuote: m[0],
-                    rawNumberText: m[1],
-                    layer: currentLayer,
-                    positionText: `Layer ${currentLayer}`,
-                  })
-                }
               }
+            } else {
+              if (num >= specRw.min && num <= specRw.max) {
+                fieldFindings.roadWidth.missingUnitHits.push({
+                  rawQuote: mRw[0],
+                  rawNumberText: mRw[1],
+                  layer: currentLayer,
+                  positionText: `Layer ${currentLayer}`,
+                })
+              }
+            }
+          }
+        }
+
+        // 2. Lane Count: concrete slab strips evidence
+        const laneRegex =
+          /(?:số\s*dải\s*(?:tấm|bê\s*tông|mặt\s*đường|btxm)|so\s*dai\s*(?:tam|be\s*tong|mat\s*duong|btxm)|chia\s*thành\s*([1-8])\s*dải\s*(?:tấm|bê\s*tông|btxm)?|([1-8])\s*dải\s*(?:tấm|bê\s*tông|btxm)|dải\s*tấm\s*BTXM)\s*(?:[=:]\s*([1-8]))?\s*(?:dải|dai|làn|lan)?/gi
+        let mLane
+        while ((mLane = laneRegex.exec(decoded)) !== null) {
+          const numVal = parseInt(mLane[3] || mLane[2] || mLane[1], 10)
+          if (Number.isFinite(numVal) && numVal >= 1 && numVal <= 8) {
+            const already = fieldFindings.laneCount.withUnitHits.some(
+              (h) => h.normalizedValue === numVal
+            )
+            if (!already) {
+              fieldFindings.laneCount.withUnitHits.push({
+                rawQuote: mLane[0],
+                rawNumberText: String(numVal),
+                rawUnit: 'dải',
+                normalizedValue: numVal,
+                unitConverted: false,
+                layer: currentLayer,
+                positionText: `Layer ${currentLayer}`,
+              })
+            }
+          }
+        }
+
+        // 3. Segment Length (cọc / đoạn)
+        const specSeg = SECTION_3_FIELD_SPECS.find((s) => s.key === 'segmentLength')
+        const segRegex =
+          /(?:bước\s*cọc|buoc\s*coc|cự\s*ly\s*cọc|cu\s*ly\s*coc|khoảng\s*cách\s*cọc|khoang\s*cach\s*coc|chiều\s*dài\s*phân\s*đoạn|chieu\s*dai\s*phan\s*đoan)\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met|cm|mm)?(?![23²³\w])/gi
+        let mSeg
+        while ((mSeg = segRegex.exec(decoded)) !== null) {
+          const restAfter = decoded.slice(mSeg.index + mSeg[0].length)
+          if (/^\s*(?:m2|m²|m3|m³|cm2|cm²|mm2|mm²)\b/i.test(restAfter)) continue
+          const rawNum = mSeg[1].replace(',', '.')
+          let num = parseFloat(rawNum)
+          if (!Number.isFinite(num)) continue
+          const rawUnit = mSeg[2] ? mSeg[2].toLowerCase() : null
+          if (rawUnit) {
+            let unitConverted = false
+            if (rawUnit === 'cm') {
+              num /= 100
+              unitConverted = true
+            } else if (rawUnit === 'mm') {
+              num /= 1000
+              unitConverted = true
+            }
+            if (num >= specSeg.min && num <= specSeg.max) {
+              fieldFindings.segmentLength.withUnitHits.push({
+                rawQuote: mSeg[0],
+                rawNumberText: mSeg[1],
+                rawUnit,
+                normalizedValue: num,
+                unitConverted,
+                layer: currentLayer,
+                positionText: `Layer ${currentLayer}`,
+              })
+            }
+          } else {
+            if (num >= specSeg.min && num <= specSeg.max) {
+              fieldFindings.segmentLength.missingUnitHits.push({
+                rawQuote: mSeg[0],
+                rawNumberText: mSeg[1],
+                layer: currentLayer,
+                positionText: `Layer ${currentLayer}`,
+              })
+            }
+          }
+        }
+
+        // 4. Slab Length (chiều dài tấm)
+        const specSlab = SECTION_3_FIELD_SPECS.find((s) => s.key === 'slabLength')
+        const slabRegex =
+          /(?:chiều\s*dài\s*tấm|chieu\s*dai\s*tam|dài\s*tấm|dai\s*tam|tấm\s*dài|tam\s*dai)\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met|cm|mm)?(?![23²³\w])/gi
+        let mSlab
+        while ((mSlab = slabRegex.exec(decoded)) !== null) {
+          const restAfter = decoded.slice(mSlab.index + mSlab[0].length)
+          if (/^\s*(?:m2|m²|m3|m³|cm2|cm²|mm2|mm²)\b/i.test(restAfter)) continue
+          const rawNum = mSlab[1].replace(',', '.')
+          let num = parseFloat(rawNum)
+          if (!Number.isFinite(num)) continue
+          const rawUnit = mSlab[2] ? mSlab[2].toLowerCase() : null
+          if (rawUnit) {
+            let unitConverted = false
+            if (rawUnit === 'cm') {
+              num /= 100
+              unitConverted = true
+            } else if (rawUnit === 'mm') {
+              num /= 1000
+              unitConverted = true
+            }
+            if (num >= specSlab.min && num <= specSlab.max) {
+              fieldFindings.slabLength.withUnitHits.push({
+                rawQuote: mSlab[0],
+                rawNumberText: mSlab[1],
+                rawUnit,
+                normalizedValue: num,
+                unitConverted,
+                layer: currentLayer,
+                positionText: `Layer ${currentLayer}`,
+              })
+            }
+          } else {
+            if (num >= specSlab.min && num <= specSlab.max) {
+              fieldFindings.slabLength.missingUnitHits.push({
+                rawQuote: mSlab[0],
+                rawNumberText: mSlab[1],
+                layer: currentLayer,
+                positionText: `Layer ${currentLayer}`,
+              })
             }
           }
         }
