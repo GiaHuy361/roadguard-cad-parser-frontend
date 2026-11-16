@@ -43,15 +43,47 @@ export function getStudioDrawingLoadId(data, propDrawingLoadId) {
 
 export function getCenterlineStableId(feature, idx = 0) {
   if (!feature) return `line_${idx}`
-  return String(
-    feature.id ||
-    feature.properties?.id ||
+
+  // 1. Explicit AutoCAD entity handle if present
+  const handle = feature.properties?.handle ? `h:${feature.properties.handle}` : null
+
+  // 2. Explicit feature ID if present and non-empty
+  const fid = feature.id ? `id:${feature.id}` : null
+
+  // 3. Name or segment (for provenance and human debugging)
+  const nameOrSeg =
     feature.properties?.segmentId ||
     feature.properties?.segment ||
-    feature.properties?.handle ||
     feature.properties?.name ||
-    `line_${idx}`
-  )
+    feature.properties?.roadName ||
+    feature.properties?.layer ||
+    ''
+
+  // 4. Geometric coordinate fingerprint (first pt, last pt, vertex count)
+  let geomSig = ''
+  const coords = feature.geometry?.coordinates
+  if (Array.isArray(coords) && coords.length > 0) {
+    const p0 = coords[0]
+    const pN = coords[coords.length - 1]
+    if (Array.isArray(p0) && Array.isArray(pN)) {
+      const x0 = Number(p0[0]).toFixed(4)
+      const y0 = Number(p0[1]).toFixed(4)
+      const xN = Number(pN[0]).toFixed(4)
+      const yN = Number(pN[1]).toFixed(4)
+      geomSig = `coords:[${x0},${y0}->${xN},${yN}#${coords.length}]`
+    }
+  }
+
+  // To guarantee differentiation between multiple centerlines in the same drawing
+  // even when they share the exact same name, segment, or layer:
+  // We ALWAYS combine the identity discriminant with geometry signature and stable feature index.
+  const baseIdentifier = handle || fid || (nameOrSeg ? `name:${nameOrSeg}` : `feat_${idx}`)
+
+  if (geomSig) {
+    return `${baseIdentifier}::${geomSig}::idx_${idx}`
+  }
+
+  return `${baseIdentifier}::idx_${idx}`
 }
 
 export function getDrawingIdentity(data) {
@@ -389,6 +421,7 @@ export default function RoadGuardDraftExportModal({
               <select
                 value={selectedFeatureIdx}
                 onChange={(e) => setSelectedFeatureIdx(Number(e.target.value))}
+                data-testid="centerline-feature-select"
                 className="w-full px-3 py-2 rounded bg-[#0B1220] border border-[#27384E] text-[12.5px] text-[#E8EEF6]"
               >
                 {allLineStringFeatures.map((f, idx) => (
