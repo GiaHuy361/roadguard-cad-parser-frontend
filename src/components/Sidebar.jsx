@@ -29,6 +29,7 @@ import {
   getActiveProjectId,
   saveActiveProjectId,
   resolveParameterFieldState,
+  computeEffectiveParams,
   SECTION_3_SPECS,
   SECTION_4_SPECS,
 } from '../utils/projectProfiles'
@@ -234,77 +235,27 @@ export default function Sidebar({
     }
   }
 
+  const reapplyParamsForProject = (project) => {
+    const dirtySet = new Set(dirtyFieldsForCurrentScanRef.current || [])
+    setRoadParams((prev) => ({
+      ...prev,
+      ...computeEffectiveParams({
+        prev,
+        dirtySet,
+        btxmExtraction: prev.dxfBtxmExtraction,
+        geomExtraction: prev.dxfGeometryExtraction,
+        project,
+      }),
+    }))
+  }
+
   const handleSelectProject = (newProjectId) => {
     setActiveProjectId(newProjectId)
     saveActiveProjectId(newProjectId)
     const newProj = newProjectId
       ? projectProfiles.find((p) => p.id === newProjectId) || null
       : null
-    const isEligible = Boolean(
-      newProj && (newProj.isTemplate || (newProj.confirmedBy && newProj.confirmedAt))
-    )
-
-    const dirtySet = dirtyFieldsForCurrentScanRef.current || new Set()
-    setRoadParams((prev) => {
-      const btxmInputs = prev.dxfBtxmExtraction?.autoFilledInputs || {}
-      const geomInputs = prev.dxfGeometryExtraction?.autoFilledInputs || {}
-
-      const getEffective = (fieldKey, dxfVal, projVal) => {
-        if (dirtySet.has(fieldKey)) return prev[fieldKey]
-        if (dxfVal !== undefined && dxfVal !== null && String(dxfVal).trim() !== '') {
-          return String(dxfVal)
-        }
-        if (isEligible && projVal !== undefined && projVal !== null && String(projVal).trim() !== '') {
-          return String(projVal)
-        }
-        return ''
-      }
-
-      return {
-        ...prev,
-        roadWidth: getEffective(
-          'roadWidth',
-          geomInputs.roadWidth,
-          newProj?.params?.roadWidth
-        ),
-        laneCount: getEffective(
-          'laneCount',
-          geomInputs.laneCount,
-          newProj?.params?.laneCount
-        ),
-        segmentLength: getEffective(
-          'segmentLength',
-          geomInputs.segmentLength,
-          newProj?.params?.segmentLength
-        ),
-        slabLength: getEffective(
-          'slabLength',
-          geomInputs.slabLength,
-          newProj?.params?.slabLength
-        ),
-        slabThicknessCentimeters: getEffective(
-          'slabThicknessCentimeters',
-          btxmInputs.slabThicknessCentimeters,
-          newProj?.params?.slabThicknessCentimeters
-        ),
-        contractionJointSpacingMeters: getEffective(
-          'contractionJointSpacingMeters',
-          btxmInputs.contractionJointSpacingMeters,
-          newProj?.params?.contractionJointSpacingMeters
-        ),
-        expansionJointSpacingMeters: getEffective(
-          'expansionJointSpacingMeters',
-          btxmInputs.expansionJointSpacingMeters,
-          newProj?.params?.expansionJointSpacingMeters
-        ),
-        expansionJointGapMillimeters: getEffective(
-          'expansionJointGapMillimeters',
-          btxmInputs.expansionJointGapMillimeters,
-          newProj?.params?.expansionJointGapMillimeters
-        ),
-      }
-    })
-
+    reapplyParamsForProject(newProj)
     if (newProj) {
       toast.success(`Đã áp dụng bộ thông số dự án: ${newProj.name}`)
     }
@@ -313,6 +264,11 @@ export default function Sidebar({
   const handleSaveProfiles = (updatedProfiles) => {
     setProjectProfiles(updatedProfiles)
     saveProjectProfiles(updatedProfiles)
+    // Saving/confirming/un-confirming the selected profile re-applies the same rule immediately.
+    const selected = activeProjectIdRef.current
+      ? updatedProfiles.find((p) => p.id === activeProjectIdRef.current) || null
+      : null
+    reapplyParamsForProject(selected)
     toast.success('Đã lưu bộ thông số dự án.')
   }
 
@@ -322,53 +278,28 @@ export default function Sidebar({
       dirtyFieldsForCurrentScanRef.current = new Set()
       if (!setRoadParams) return
 
-      const activeProj =
-        projectProfilesRef.current.find(
-          (p) => p.id === activeProjectIdRef.current
-        ) ||
-        projectProfilesRef.current[0] ||
-        DEFAULT_PROJECT_PROFILES[0]
-
-      if (!selectedFile) {
+      // Same rule for every path: resolve the selected project at completion time.
+      const applyRule = (btxmExtraction, geomExtraction) => {
+        const proj = activeProjectIdRef.current
+          ? projectProfilesRef.current.find((p) => p.id === activeProjectIdRef.current) || null
+          : null
+        const dirtySet = new Set(dirtyFieldsForCurrentScanRef.current)
         setRoadParams((prev) => ({
           ...prev,
-          roadWidth: activeProj.params?.roadWidth ?? '',
-          laneCount: activeProj.params?.laneCount ?? '',
-          segmentLength: activeProj.params?.segmentLength ?? '',
-          slabLength: activeProj.params?.slabLength ?? '',
-          slabThicknessCentimeters:
-            activeProj.params?.slabThicknessCentimeters ?? '',
-          contractionJointSpacingMeters:
-            activeProj.params?.contractionJointSpacingMeters ?? '',
-          expansionJointSpacingMeters:
-            activeProj.params?.expansionJointSpacingMeters ?? '',
-          expansionJointGapMillimeters:
-            activeProj.params?.expansionJointGapMillimeters ?? '',
-          dxfBtxmExtraction: null,
-          dxfGeometryExtraction: null,
+          ...computeEffectiveParams({ prev, dirtySet, btxmExtraction, geomExtraction, project: proj }),
+          dxfBtxmExtraction: btxmExtraction,
+          dxfGeometryExtraction: geomExtraction,
         }))
+      }
+
+      if (!selectedFile) {
+        applyRule(null, null)
         return
       }
 
       const lowerName = String(selectedFile.name || '').toLowerCase()
       if (!lowerName.endsWith('.dxf')) {
-        setRoadParams((prev) => ({
-          ...prev,
-          roadWidth: activeProj.params?.roadWidth ?? '',
-          laneCount: activeProj.params?.laneCount ?? '',
-          segmentLength: activeProj.params?.segmentLength ?? '',
-          slabLength: activeProj.params?.slabLength ?? '',
-          slabThicknessCentimeters:
-            activeProj.params?.slabThicknessCentimeters ?? '',
-          contractionJointSpacingMeters:
-            activeProj.params?.contractionJointSpacingMeters ?? '',
-          expansionJointSpacingMeters:
-            activeProj.params?.expansionJointSpacingMeters ?? '',
-          expansionJointGapMillimeters:
-            activeProj.params?.expansionJointGapMillimeters ?? '',
-          dxfBtxmExtraction: null,
-          dxfGeometryExtraction: null,
-        }))
+        applyRule(null, null)
         return
       }
 
@@ -393,138 +324,10 @@ export default function Sidebar({
           selectedFile.name
         )
         if (btxmScanSeqRef.current !== scanId) return
-
-        const dirtySet = new Set(dirtyFieldsForCurrentScanRef.current)
-        const getEffectiveVal = (fieldKey, dxfVal, projVal) => {
-          if (dirtySet.has(fieldKey)) return undefined
-          // Priority 1: DXF extracted
-          if (
-            dxfVal !== undefined &&
-            dxfVal !== null &&
-            String(dxfVal).trim() !== ''
-          ) {
-            return String(dxfVal)
-          }
-          // Priority 2: Active project profile
-          if (
-            projVal !== undefined &&
-            projVal !== null &&
-            String(projVal).trim() !== ''
-          ) {
-            return String(projVal)
-          }
-          // Priority 3: Blank
-          return ''
-        }
-
-        const currentActiveProj = activeProjectIdRef.current
-          ? projectProfilesRef.current.find(
-              (p) => p.id === activeProjectIdRef.current
-            ) || null
-          : null
-        const isEligible = Boolean(
-          currentActiveProj &&
-          (currentActiveProj.isTemplate ||
-            (currentActiveProj.confirmedBy && currentActiveProj.confirmedAt))
-        )
-
-        setRoadParams((prev) => {
-          const next = { ...prev }
-          const btxmInputs = btxmExtraction.autoFilledInputs || {}
-          const geomInputs = geomExtraction.autoFilledInputs || {}
-
-          const rw = getEffectiveVal(
-            'roadWidth',
-            geomInputs.roadWidth,
-            isEligible ? currentActiveProj?.params?.roadWidth : undefined
-          )
-          if (rw !== undefined) next.roadWidth = rw
-
-          const lc = getEffectiveVal(
-            'laneCount',
-            geomInputs.laneCount,
-            isEligible ? currentActiveProj?.params?.laneCount : undefined
-          )
-          if (lc !== undefined) next.laneCount = lc
-
-          const sl = getEffectiveVal(
-            'segmentLength',
-            geomInputs.segmentLength,
-            isEligible ? currentActiveProj?.params?.segmentLength : undefined
-          )
-          if (sl !== undefined) next.segmentLength = sl
-
-          const sb = getEffectiveVal(
-            'slabLength',
-            geomInputs.slabLength,
-            isEligible ? currentActiveProj?.params?.slabLength : undefined
-          )
-          if (sb !== undefined) next.slabLength = sb
-
-          const st = getEffectiveVal(
-            'slabThicknessCentimeters',
-            btxmInputs.slabThicknessCentimeters,
-            isEligible ? currentActiveProj?.params?.slabThicknessCentimeters : undefined
-          )
-          if (st !== undefined) next.slabThicknessCentimeters = st
-
-          const cj = getEffectiveVal(
-            'contractionJointSpacingMeters',
-            btxmInputs.contractionJointSpacingMeters,
-            isEligible ? currentActiveProj?.params?.contractionJointSpacingMeters : undefined
-          )
-          if (cj !== undefined) next.contractionJointSpacingMeters = cj
-
-          const ej = getEffectiveVal(
-            'expansionJointSpacingMeters',
-            btxmInputs.expansionJointSpacingMeters,
-            isEligible ? currentActiveProj?.params?.expansionJointSpacingMeters : undefined
-          )
-          if (ej !== undefined) next.expansionJointSpacingMeters = ej
-
-          const eg = getEffectiveVal(
-            'expansionJointGapMillimeters',
-            btxmInputs.expansionJointGapMillimeters,
-            isEligible ? currentActiveProj?.params?.expansionJointGapMillimeters : undefined
-          )
-          if (eg !== undefined) next.expansionJointGapMillimeters = eg
-
-          next.dxfBtxmExtraction = btxmExtraction
-          next.dxfGeometryExtraction = geomExtraction
-          return next
-        })
+        applyRule(btxmExtraction, geomExtraction)
       } catch {
         if (btxmScanSeqRef.current !== scanId) return
-        const dirtySet = new Set(dirtyFieldsForCurrentScanRef.current)
-        setRoadParams((prev) => ({
-          ...prev,
-          roadWidth: dirtySet.has('roadWidth')
-            ? prev.roadWidth
-            : activeProj.params?.roadWidth ?? '',
-          laneCount: dirtySet.has('laneCount')
-            ? prev.laneCount
-            : activeProj.params?.laneCount ?? '',
-          segmentLength: dirtySet.has('segmentLength')
-            ? prev.segmentLength
-            : activeProj.params?.segmentLength ?? '',
-          slabLength: dirtySet.has('slabLength')
-            ? prev.slabLength
-            : activeProj.params?.slabLength ?? '',
-          slabThicknessCentimeters: dirtySet.has('slabThicknessCentimeters')
-            ? prev.slabThicknessCentimeters
-            : activeProj.params?.slabThicknessCentimeters ?? '',
-          contractionJointSpacingMeters: dirtySet.has('contractionJointSpacingMeters')
-            ? prev.contractionJointSpacingMeters
-            : activeProj.params?.contractionJointSpacingMeters ?? '',
-          expansionJointSpacingMeters: dirtySet.has('expansionJointSpacingMeters')
-            ? prev.expansionJointSpacingMeters
-            : activeProj.params?.expansionJointSpacingMeters ?? '',
-          expansionJointGapMillimeters: dirtySet.has('expansionJointGapMillimeters')
-            ? prev.expansionJointGapMillimeters
-            : activeProj.params?.expansionJointGapMillimeters ?? '',
-          dxfBtxmExtraction: null,
-          dxfGeometryExtraction: null,
-        }))
+        applyRule(null, null)
       }
     },
     [setRoadParams, setSelectedCm]

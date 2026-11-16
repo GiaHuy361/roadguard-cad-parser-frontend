@@ -412,3 +412,42 @@ export function resolveParameterFieldState({
     isMissing: true,
   }
 }
+
+export function isProfileEligible(project) {
+  return Boolean(project && (project.isTemplate || (project.confirmedBy && project.confirmedAt)))
+}
+
+const GEOM_KEYS = ['roadWidth', 'laneCount', 'segmentLength', 'slabLength']
+const BTXM_KEYS = [
+  'slabThicknessCentimeters',
+  'contractionJointSpacingMeters',
+  'expansionJointSpacingMeters',
+  'expansionJointGapMillimeters',
+]
+
+/**
+ * Single source of truth for the number-picking rule, used by: successful scan, failed scan,
+ * project switch, and save/confirm of the selected profile.
+ *   1. Engineer-entered value for the current drawing (dirty) is always kept.
+ *   2. Otherwise evidence-based value read from the DXF.
+ *   3. Otherwise value from the selected profile, ONLY if it is a template or a confirmed real profile.
+ *   4. Otherwise blank.
+ */
+export function computeEffectiveParams({ prev = {}, dirtySet, btxmExtraction, geomExtraction, project }) {
+  const dirty = dirtySet instanceof Set ? dirtySet : new Set()
+  const eligible = isProfileEligible(project)
+  const btxmInputs = btxmExtraction?.autoFilledInputs || {}
+  const geomInputs = geomExtraction?.autoFilledInputs || {}
+  const has = (v) => v !== undefined && v !== null && String(v).trim() !== ''
+  const out = {}
+  const pick = (key, dxfVal) => {
+    if (dirty.has(key)) return prev[key] ?? ''
+    if (has(dxfVal)) return String(dxfVal)
+    const pv = project?.params?.[key]
+    if (eligible && has(pv)) return String(pv)
+    return ''
+  }
+  for (const k of GEOM_KEYS) out[k] = pick(k, geomInputs[k])
+  for (const k of BTXM_KEYS) out[k] = pick(k, btxmInputs[k])
+  return out
+}
