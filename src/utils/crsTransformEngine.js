@@ -1597,8 +1597,13 @@ export function validateRoadGuardGeometryDraft(draftPayload, expectedProjectUtmS
   }
 
   // Rule 9: surveyWidthMeters > 0
-  const surveyWidth = Number(draftPayload.surveyWidthMeters)
-  if (!Number.isFinite(surveyWidth) || surveyWidth <= 0) {
+  const surveyWidth =
+    draftPayload.surveyWidthMeters !== null &&
+    draftPayload.surveyWidthMeters !== undefined &&
+    String(draftPayload.surveyWidthMeters).trim() !== ''
+      ? Number(draftPayload.surveyWidthMeters)
+      : null
+  if (surveyWidth === null || !Number.isFinite(surveyWidth) || surveyWidth <= 0) {
     errors.push('Trường \'surveyWidthMeters\' (Bề rộng hành lang khảo sát) phải lớn hơn 0m.')
   }
 
@@ -1717,7 +1722,13 @@ export function buildRoadGuardGeometryDraft({
   const toOffsetMeters = exactUtmLength
 
   const widthVal = Number(effWidth)
-  const surveyWidthVal = Number(surveyWidthMeters)
+  const surveyWidthVal =
+    surveyWidthMeters !== null &&
+    surveyWidthMeters !== undefined &&
+    String(surveyWidthMeters).trim() !== '' &&
+    !isNaN(Number(surveyWidthMeters))
+      ? Number(surveyWidthMeters)
+      : null
 
   const payload = {
     sourceKind: 'COORDINATES',

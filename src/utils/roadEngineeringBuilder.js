@@ -2020,7 +2020,8 @@ export function enrichGeoJsonWithEngineeringFeatures(
   )
   const isSurfaceAreaProvisional = Boolean(
     hasValidRoadWidth &&
-      (baseRoadWidth === null || Math.abs(roadW - baseRoadWidth) > 1e-3) &&
+      baseRoadWidth !== null &&
+      Math.abs(roadW - baseRoadWidth) > 1e-3 &&
       effectiveTotalLength > 0
   )
   // Geometric polygon area is ONLY reported when an actual Polygon exists and matches the current road width

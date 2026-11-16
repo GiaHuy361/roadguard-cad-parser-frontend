@@ -64,7 +64,7 @@ export default function RoadGuardDraftExportModal({
     'Nhập bình đồ tuyến chuẩn hóa từ CAD & GIS STUDIO'
   )
   const [stationOriginMeters, setStationOriginMeters] = useState('0')
-  const [surveyWidthMeters, setSurveyWidthMeters] = useState('12')
+  const [surveyWidthMeters, setSurveyWidthMeters] = useState('')
   const [copied, setCopied] = useState(false)
 
 
@@ -85,21 +85,23 @@ export default function RoadGuardDraftExportModal({
       ''
     setRoadCode(initialCode)
     setRoadName(initialName)
-    const rawW =
-      roadParams?.roadWidth != null && Number(roadParams.roadWidth) > 0
-        ? Number(roadParams.roadWidth)
-        : analyzedRoadWidth != null && Number(analyzedRoadWidth) > 0
-        ? Number(analyzedRoadWidth)
+    const evidenceSurveyWidth =
+      chosenFeature?.properties?.surveyWidthMeters != null && Number(chosenFeature.properties.surveyWidthMeters) > 0
+        ? Number(chosenFeature.properties.surveyWidthMeters)
+        : geoJsonData?.surveyWidthMeters != null && Number(geoJsonData.surveyWidthMeters) > 0
+        ? Number(geoJsonData.surveyWidthMeters)
+        : roadParams?.surveyWidthMeters != null && Number(roadParams.surveyWidthMeters) > 0
+        ? Number(roadParams.surveyWidthMeters)
         : null
-    if (rawW != null) {
-      setSurveyWidthMeters(String(Math.max(rawW, 12)))
-    }
+
+    setSurveyWidthMeters(evidenceSurveyWidth != null ? String(evidenceSurveyWidth) : '')
+
     if (props.recommendedUtmSrid === 32649) {
       setSourceCrs(32649)
     } else {
       setSourceCrs(32648)
     }
-  }, [isOpen, chosenFeature, geoJsonData, roadParams?.roadWidth, analyzedRoadWidth])
+  }, [isOpen, chosenFeature, geoJsonData, roadParams?.surveyWidthMeters])
 
   const centerlineWgs84 = useMemo(() => {
     const coords = chosenFeature?.geometry?.coordinates || []
@@ -155,12 +157,18 @@ export default function RoadGuardDraftExportModal({
     )
   }, [draftBuildResult, sourceCrs])
 
+  const hasValidSurveyWidth =
+    surveyWidthMeters !== '' &&
+    !isNaN(Number(surveyWidthMeters)) &&
+    Number(surveyWidthMeters) > 0
+
   const isExportBlocked =
     crsLifecycleState === 'ANALYZING' ||
     isSurfaceAreaProvisional ||
     isCrsStale ||
     crsLifecycleState === 'UNCONFIGURED' ||
     crsLifecycleState === 'INVALID_CONFIG' ||
+    !hasValidSurveyWidth ||
     !contractCheck.valid
 
   const getExportBlockedReason = () => {
@@ -178,6 +186,9 @@ export default function RoadGuardDraftExportModal({
     }
     if (isSurfaceAreaProvisional) {
       return `Bề rộng mặt đường đã đổi (${analyzedRoadWidth}m → ${effectiveWidth}m). Hãy cập nhật bề rộng trước khi xuất draft.`
+    }
+    if (!hasValidSurveyWidth) {
+      return 'Chưa khai báo bề rộng khảo sát (surveyWidthMeters). Kỹ sư cần nhập bề rộng khảo sát hợp lệ (> 0m) để mở khóa xuất draft.'
     }
     if (!contractCheck.valid) {
       return 'Dữ liệu chưa thỏa mãn hợp đồng GeometryDraftInput: ' + contractCheck.errors.join('; ')
@@ -381,16 +392,27 @@ export default function RoadGuardDraftExportModal({
                 />
               </div>
               <div>
-                <label className="block text-[12.5px] font-semibold text-[#C0CEDF] mb-1">
-                  Bề rộng khảo sát (m)
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[12.5px] font-semibold text-[#C0CEDF]">
+                    Bề rộng khảo sát (m) <span className="text-[#EF4444]">*</span>
+                  </label>
+                  {!hasValidSurveyWidth && (
+                    <span className="text-[11px] text-[#F59E0B] font-medium">Chưa khai báo</span>
+                  )}
+                </div>
                 <input
                   type="number"
                   step="0.5"
                   min={effectiveWidth ?? 0.5}
                   value={surveyWidthMeters}
                   onChange={(e) => setSurveyWidthMeters(e.target.value)}
-                  className="w-full px-3 py-2 rounded bg-[#0B1220] border border-[#27384E] text-[13px] font-mono text-[#E8EEF6]"
+                  placeholder="Chưa có dữ liệu (kỹ sư nhập)..."
+                  data-testid="survey-width-input"
+                  className={`w-full px-3 py-2 rounded bg-[#0B1220] border ${
+                    !hasValidSurveyWidth
+                      ? 'border-[#F59E0B]/70 focus:border-[#F59E0B]'
+                      : 'border-[#27384E] focus:border-[#22B7C9]'
+                  } text-[13px] font-mono text-[#E8EEF6]`}
                 />
               </div>
             </div>
@@ -417,6 +439,19 @@ export default function RoadGuardDraftExportModal({
               <AlertTriangle className="w-4 h-4 text-[#EF4444] shrink-0" />
               <span>
                 Cấu hình hệ tọa độ (L₀/k₀) đã thay đổi sau khi bóc tách. Vui lòng bấm <strong>Phân tích lại</strong> trước khi xuất RoadGuard Draft JSON.
+              </span>
+            </div>
+          )}
+
+          {/* Missing Survey Width Warning */}
+          {!hasValidSurveyWidth && (
+            <div
+              data-testid="missing-survey-width-warning"
+              className="p-3 rounded-md bg-[#EF4444]/15 border border-[#EF4444]/50 text-[#FCA5A5] text-[12px] flex items-center gap-2"
+            >
+              <AlertTriangle className="w-4 h-4 text-[#EF4444] shrink-0" />
+              <span>
+                <strong>Chưa có dữ liệu bề rộng khảo sát:</strong> Bản vẽ chưa khai báo trường <code>surveyWidthMeters</code>. Kỹ sư vui lòng nhập giá trị hợp lệ (&gt; 0m) vào ô bên trên để mở khóa nút <strong>Sao chép JSON</strong> và <strong>Tải RoadGuard Draft</strong>.
               </span>
             </div>
           )}
@@ -468,8 +503,8 @@ export default function RoadGuardDraftExportModal({
                 <span className="text-[#8FA3BA] block text-[11px]">
                   widthMeters / surveyWidth:
                 </span>
-                <strong className="text-[#39B58A]">
-                  {effectiveWidth != null ? `${effectiveWidth}m` : 'Chưa có dữ liệu'} / {surveyWidthMeters}m
+                <strong className={hasValidSurveyWidth ? 'text-[#39B58A]' : 'text-[#EF4444]'}>
+                  {effectiveWidth != null ? `${effectiveWidth}m` : 'Chưa có dữ liệu'} / {hasValidSurveyWidth ? `${surveyWidthMeters}m` : 'Chưa có dữ liệu'}
                 </strong>
               </div>
             </div>
