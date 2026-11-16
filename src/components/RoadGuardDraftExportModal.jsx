@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import {
   X,
   Download,
@@ -18,6 +18,27 @@ import {
   PAVEMENT_DESIGN_FIELD_SPECS,
   normalizeRoadParams,
 } from '../utils/roadEngineeringBuilder'
+
+export function getDrawingIdentity(data) {
+  if (!data) return ''
+  const name =
+    data.fileName ||
+    data.properties?.fileName ||
+    data.properties?.name ||
+    data.roadName ||
+    ''
+  const featCount = data.features?.length || 0
+  const totalLen = data.totalLengthMeters || data.analytics?.totalLengthMeters || 0
+  const firstCoord = data.features?.[0]?.geometry?.coordinates?.[0]
+  const coordSample = Array.isArray(firstCoord)
+    ? `${Number(firstCoord[0])?.toFixed?.(4) ?? firstCoord[0]},${Number(firstCoord[1])?.toFixed?.(4) ?? firstCoord[1]}`
+    : ''
+  return `${name}#${featCount}#${totalLen}#${coordSample}`
+}
+
+// Module-scoped cache across modal toggles/remounts
+const modalUserSurveyWidthsMap = new Map()
+const modalUserRoadCodeMap = new Map()
 
 export default function RoadGuardDraftExportModal({
   isOpen,
@@ -67,41 +88,59 @@ export default function RoadGuardDraftExportModal({
   const [surveyWidthMeters, setSurveyWidthMeters] = useState('')
   const [copied, setCopied] = useState(false)
 
-
   const chosenFeature =
     allLineStringFeatures[selectedFeatureIdx] || activeCenterlineFeature
 
+  const drawingId = useMemo(() => getDrawingIdentity(geoJsonData), [geoJsonData])
+  const compositeKey = `${drawingId}::line_${selectedFeatureIdx}`
+
   useEffect(() => {
     if (!isOpen) return
+
     const props = chosenFeature?.properties || geoJsonData?.crsMetadata || {}
-    const initialCode =
-      chosenFeature?.properties?.roadCode ||
-      geoJsonData?.roadCode ||
-      ''
+
+    // 1. Road code: retain engineer confirmed code if typed on this drawing, else initialize from drawing
+    const savedCode = modalUserRoadCodeMap.get(drawingId)
+    if (savedCode !== undefined) {
+      setRoadCode(savedCode)
+    } else {
+      const initialCode =
+        chosenFeature?.properties?.roadCode ||
+        geoJsonData?.roadCode ||
+        ''
+      setRoadCode(initialCode)
+    }
+
     const initialName =
       chosenFeature?.properties?.roadName ||
       chosenFeature?.properties?.name ||
       geoJsonData?.roadName ||
       ''
-    setRoadCode(initialCode)
     setRoadName(initialName)
-    const evidenceSurveyWidth =
-      chosenFeature?.properties?.surveyWidthMeters != null && Number(chosenFeature.properties.surveyWidthMeters) > 0
-        ? Number(chosenFeature.properties.surveyWidthMeters)
-        : geoJsonData?.surveyWidthMeters != null && Number(geoJsonData.surveyWidthMeters) > 0
-        ? Number(geoJsonData.surveyWidthMeters)
-        : roadParams?.surveyWidthMeters != null && Number(roadParams.surveyWidthMeters) > 0
-        ? Number(roadParams.surveyWidthMeters)
-        : null
 
-    setSurveyWidthMeters(evidenceSurveyWidth != null ? String(evidenceSurveyWidth) : '')
+    // 2. Survey width: retain engineer entered survey width on the SAME drawing & centerline
+    const savedWidth = modalUserSurveyWidthsMap.get(compositeKey)
+    if (savedWidth !== undefined) {
+      setSurveyWidthMeters(savedWidth)
+    } else {
+      const evidenceSurveyWidth =
+        chosenFeature?.properties?.surveyWidthMeters != null && Number(chosenFeature.properties.surveyWidthMeters) > 0
+          ? Number(chosenFeature.properties.surveyWidthMeters)
+          : geoJsonData?.surveyWidthMeters != null && Number(geoJsonData.surveyWidthMeters) > 0
+          ? Number(geoJsonData.surveyWidthMeters)
+          : roadParams?.surveyWidthMeters != null && Number(roadParams.surveyWidthMeters) > 0
+          ? Number(roadParams.surveyWidthMeters)
+          : null
+
+      setSurveyWidthMeters(evidenceSurveyWidth != null ? String(evidenceSurveyWidth) : '')
+    }
 
     if (props.recommendedUtmSrid === 32649) {
       setSourceCrs(32649)
     } else {
       setSourceCrs(32648)
     }
-  }, [isOpen, chosenFeature, geoJsonData, roadParams?.surveyWidthMeters])
+  }, [isOpen, chosenFeature, geoJsonData, roadParams?.surveyWidthMeters, compositeKey, drawingId])
 
   const centerlineWgs84 = useMemo(() => {
     const coords = chosenFeature?.geometry?.coordinates || []
@@ -283,6 +322,7 @@ export default function RoadGuardDraftExportModal({
           </div>
           <button
             type="button"
+            data-testid="modal-close-btn"
             onClick={onClose}
             className="p-1.5 rounded text-[#8FA3BA] hover:text-[#E8EEF6] hover:bg-[#17263C] cursor-pointer"
           >
@@ -340,7 +380,11 @@ export default function RoadGuardDraftExportModal({
                 type="text"
                 maxLength={80}
                 value={roadCode}
-                onChange={(e) => setRoadCode(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setRoadCode(val)
+                  modalUserRoadCodeMap.set(drawingId, val)
+                }}
                 placeholder="Nhập mã tuyến thực tế (tối đa 80 ký tự)..."
                 className="w-full px-3 py-2 rounded bg-[#0B1220] border border-[#27384E] focus:border-[#22B7C9] focus:outline-none text-[13px] font-mono text-[#E8EEF6]"
               />
@@ -405,7 +449,11 @@ export default function RoadGuardDraftExportModal({
                   step="0.5"
                   min={effectiveWidth ?? 0.5}
                   value={surveyWidthMeters}
-                  onChange={(e) => setSurveyWidthMeters(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setSurveyWidthMeters(val)
+                    modalUserSurveyWidthsMap.set(compositeKey, val)
+                  }}
                   placeholder="Chưa có dữ liệu (kỹ sư nhập)..."
                   data-testid="survey-width-input"
                   className={`w-full px-3 py-2 rounded bg-[#0B1220] border ${
@@ -578,6 +626,7 @@ export default function RoadGuardDraftExportModal({
           <div className="flex items-center gap-2">
             <button
               type="button"
+              data-testid="copy-draft-btn"
               onClick={handleCopyDraft}
               disabled={isExportBlocked}
               title={getExportBlockedReason() || undefined}
@@ -588,6 +637,7 @@ export default function RoadGuardDraftExportModal({
             </button>
             <button
               type="button"
+              data-testid="download-draft-btn"
               onClick={handleDownloadDraft}
               disabled={isExportBlocked}
               title={getExportBlockedReason() || undefined}
