@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import toast, { Toaster } from 'react-hot-toast'
 import Sidebar from './components/Sidebar'
 import RightInspectorPanel from './components/RightInspectorPanel'
@@ -109,10 +109,13 @@ export default function App() {
   const [isCrsStale, setIsCrsStale] = useState(false)
   const [crsLifecycleState, setCrsLifecycleState] = useState('VALID_APPLIED')
   const [appliedCrsConfig, setAppliedCrsConfig] = useState(null)
+  const [drawingLoadId, setDrawingLoadId] = useState(null)
+  const loadCounterRef = useRef(0)
 
   const handleCadFileChange = useCallback((file) => {
     setRawDxfFile(file)
     setGeoJsonData(null)
+    setDrawingLoadId(null)
     setAnalyticsData(null)
     setRoadOverlay(null)
     setCadStats(null)
@@ -123,11 +126,34 @@ export default function App() {
     setIsCrsStale(false)
   }, [])
 
+  const handleDataLoaded = useCallback((data) => {
+    if (data) {
+      loadCounterRef.current += 1
+      const nextId =
+        data.drawingLoadId ||
+        `studio-draw-load-${loadCounterRef.current}-${Date.now()}`
+      setDrawingLoadId(nextId)
+      setGeoJsonData({
+        ...data,
+        drawingLoadId: nextId,
+      })
+    } else {
+      setDrawingLoadId(null)
+      setGeoJsonData(null)
+    }
+  }, [])
+
   const [activeTab, setActiveTab] = useState('map')
   const [copied, setCopied] = useState(false)
   const [showFullJson, setShowFullJson] = useState(false)
   const [coordDisplayMode, setCoordDisplayMode] = useState('DUAL')
   const [showRoadGuardDraftModal, setShowRoadGuardDraftModal] = useState(false)
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.__openRoadGuardDraftModal = () => setShowRoadGuardDraftModal(true)
+    }
+  }, [])
 
   const isLive = !!(geoJsonData || analyticsData)
 
@@ -522,7 +548,7 @@ export default function App() {
         {/* Column 1: Left Input & Configuration Panel */}
         <Sidebar
           cadFile={rawDxfFile}
-          onDataLoaded={setGeoJsonData}
+          onDataLoaded={handleDataLoaded}
           onAnalyticsLoaded={setAnalyticsData}
           onOverlayLoaded={setRoadOverlay}
           onCadFileChange={handleCadFileChange}
@@ -712,6 +738,7 @@ export default function App() {
 
                       <button
                         type="button"
+                        data-testid="open-roadguard-draft-modal-btn"
                         onClick={() => setShowRoadGuardDraftModal(true)}
                         disabled={isDraftExportBlocked}
                         title={getExportBlockedReason('draft') || 'Xuất RoadGuard Draft (.json)'}
@@ -902,6 +929,7 @@ export default function App() {
         isOpen={showRoadGuardDraftModal}
         onClose={() => setShowRoadGuardDraftModal(false)}
         geoJsonData={exportGeoJson}
+        drawingLoadId={drawingLoadId}
         roadParams={normalizedParams}
         isSurfaceAreaProvisional={isSurfaceAreaProvisional}
         analyzedRoadWidth={analyzedRoadWidth}

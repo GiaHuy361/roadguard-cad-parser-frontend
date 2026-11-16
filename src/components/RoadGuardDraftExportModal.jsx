@@ -19,31 +19,50 @@ import {
   normalizeRoadParams,
 } from '../utils/roadEngineeringBuilder'
 
-export function getDrawingIdentity(data) {
-  if (!data) return ''
-  const name =
-    data.fileName ||
-    data.properties?.fileName ||
-    data.properties?.name ||
-    data.roadName ||
-    ''
-  const featCount = data.features?.length || 0
-  const totalLen = data.totalLengthMeters || data.analytics?.totalLengthMeters || 0
-  const firstCoord = data.features?.[0]?.geometry?.coordinates?.[0]
-  const coordSample = Array.isArray(firstCoord)
-    ? `${Number(firstCoord[0])?.toFixed?.(4) ?? firstCoord[0]},${Number(firstCoord[1])?.toFixed?.(4) ?? firstCoord[1]}`
-    : ''
-  return `${name}#${featCount}#${totalLen}#${coordSample}`
+// Module-scoped cache across modal toggles/remounts
+export const modalUserSurveyWidthsMap = new Map()
+export const modalUserRoadCodeMap = new Map()
+
+const fallbackDrawingIdMap = new WeakMap()
+
+export function getStudioDrawingLoadId(data, propDrawingLoadId) {
+  if (propDrawingLoadId) return String(propDrawingLoadId)
+  if (data?.drawingLoadId) return String(data.drawingLoadId)
+  if (data?._drawingLoadId) return String(data._drawingLoadId)
+  if (data?._loadId) return String(data._loadId)
+  if (data?.properties?.drawingLoadId) return String(data.properties.drawingLoadId)
+  if (!data || typeof data !== 'object') return ''
+  if (!fallbackDrawingIdMap.has(data)) {
+    fallbackDrawingIdMap.set(
+      data,
+      `drawing-load-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+    )
+  }
+  return fallbackDrawingIdMap.get(data)
 }
 
-// Module-scoped cache across modal toggles/remounts
-const modalUserSurveyWidthsMap = new Map()
-const modalUserRoadCodeMap = new Map()
+export function getCenterlineStableId(feature, idx = 0) {
+  if (!feature) return `line_${idx}`
+  return String(
+    feature.id ||
+    feature.properties?.id ||
+    feature.properties?.segmentId ||
+    feature.properties?.segment ||
+    feature.properties?.handle ||
+    feature.properties?.name ||
+    `line_${idx}`
+  )
+}
+
+export function getDrawingIdentity(data) {
+  return getStudioDrawingLoadId(data)
+}
 
 export default function RoadGuardDraftExportModal({
   isOpen,
   onClose,
   geoJsonData,
+  drawingLoadId = null,
   roadParams,
   isSurfaceAreaProvisional = false,
   analyzedRoadWidth = null,
@@ -91,16 +110,33 @@ export default function RoadGuardDraftExportModal({
   const chosenFeature =
     allLineStringFeatures[selectedFeatureIdx] || activeCenterlineFeature
 
-  const drawingId = useMemo(() => getDrawingIdentity(geoJsonData), [geoJsonData])
-  const compositeKey = `${drawingId}::line_${selectedFeatureIdx}`
+  const activeDrawingId = useMemo(
+    () => getStudioDrawingLoadId(geoJsonData, drawingLoadId),
+    [geoJsonData, drawingLoadId]
+  )
+  const centerlineStableId = useMemo(
+    () => getCenterlineStableId(chosenFeature, selectedFeatureIdx),
+    [chosenFeature, selectedFeatureIdx]
+  )
+  const compositeKey = `${activeDrawingId}::${centerlineStableId}`
+
+  if (typeof window !== 'undefined') {
+    window.__lastModalDebug = {
+      activeDrawingId,
+      centerlineStableId,
+      compositeKey,
+      drawingLoadId,
+      hasGeoJsonData: !!geoJsonData,
+    }
+  }
 
   useEffect(() => {
     if (!isOpen) return
 
     const props = chosenFeature?.properties || geoJsonData?.crsMetadata || {}
 
-    // 1. Road code: retain engineer confirmed code if typed on this drawing, else initialize from drawing
-    const savedCode = modalUserRoadCodeMap.get(drawingId)
+    // 1. Road code: retain engineer confirmed code on the SAME drawing & centerline, else initialize from drawing
+    const savedCode = modalUserRoadCodeMap.get(compositeKey)
     if (savedCode !== undefined) {
       setRoadCode(savedCode)
     } else {
@@ -140,7 +176,7 @@ export default function RoadGuardDraftExportModal({
     } else {
       setSourceCrs(32648)
     }
-  }, [isOpen, chosenFeature, geoJsonData, roadParams?.surveyWidthMeters, compositeKey, drawingId])
+  }, [isOpen, chosenFeature, geoJsonData, roadParams?.surveyWidthMeters, compositeKey])
 
   const centerlineWgs84 = useMemo(() => {
     const coords = chosenFeature?.geometry?.coordinates || []
@@ -301,7 +337,7 @@ export default function RoadGuardDraftExportModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 select-none">
+    <div role="dialog" data-testid="roadguard-draft-modal" className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 select-none">
       <div className="w-full max-w-3xl max-h-[90vh] bg-[#111D2E] border border-[#27384E] rounded-lg shadow-2xl flex flex-col overflow-hidden text-[#E8EEF6]">
         {/* Header */}
         <div className="px-5 py-3.5 bg-[#0B1220] border-b border-[#27384E] flex items-center justify-between">
@@ -383,9 +419,10 @@ export default function RoadGuardDraftExportModal({
                 onChange={(e) => {
                   const val = e.target.value
                   setRoadCode(val)
-                  modalUserRoadCodeMap.set(drawingId, val)
+                  modalUserRoadCodeMap.set(compositeKey, val)
                 }}
                 placeholder="Nhập mã tuyến thực tế (tối đa 80 ký tự)..."
+                data-testid="road-code-input"
                 className="w-full px-3 py-2 rounded bg-[#0B1220] border border-[#27384E] focus:border-[#22B7C9] focus:outline-none text-[13px] font-mono text-[#E8EEF6]"
               />
             </div>
