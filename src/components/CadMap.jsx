@@ -1023,7 +1023,13 @@ export default function CadMap({
     const p = feature.properties || {}
     const name = p.name || 'Tuyến Thiết Kế'
     const type = p.type || 'Hạ tầng giao thông'
-    const width = p.roadWidth || roadParams?.roadWidth || 7.0
+    const rawWidth =
+      p.roadWidth != null && Number(p.roadWidth) > 0
+        ? Number(p.roadWidth)
+        : roadParams?.roadWidth != null && Number(roadParams.roadWidth) > 0
+        ? Number(roadParams.roadWidth)
+        : null
+    const widthText = rawWidth != null ? `${rawWidth} m` : 'Chưa có dữ liệu'
     const len = p.totalLength ? `${Number(p.totalLength).toFixed(1)} m` : null
     const isIsland = p.type === 'TrafficIsland' || p.layer === 'DAO_GIAO_THONG' || p.isIsland
     const isSlab = p.type === 'Slab'
@@ -1037,27 +1043,34 @@ export default function CadMap({
         <div style="font-family:Inter,sans-serif;min-width:220px;color:#f1f5f9">
           <div style="font-size:13px;font-weight:700;color:#38bdf8;margin-bottom:6px;border-bottom:1px solid #27384e;padding-bottom:4px;display:flex;align-items:center;justify-content:space-between">
             <span>TẤM BÊ TÔNG ${p.code}</span>
-            <span style="font-size:11px;color:#39b58a;font-weight:600">TCVN</span>
+            <span style="font-size:11px;color:#39b58a;font-weight:600">BTXM</span>
           </div>
           <table style="width:100%;font-size:12px;border-collapse:collapse">
             <tr><td style="color:#94a3b8;padding:2px 0">Lý trình:</td><td style="color:#fbbf24;font-weight:700">${p.chainage}</td></tr>
-            <tr><td style="color:#94a3b8;padding:2px 0">Phân đoạn:</td><td style="color:#38bdf8;font-weight:700">${p.segment}</td></tr>
+            ${p.segment ? `<tr><td style="color:#94a3b8;padding:2px 0">Phân đoạn:</td><td style="color:#38bdf8;font-weight:700">${p.segment}</td></tr>` : ''}
             <tr><td style="color:#94a3b8;padding:2px 0">Kích thước tấm:</td><td style="color:#e2e8f0;font-weight:600">${p.dimensions}</td></tr>
-            <tr><td style="color:#94a3b8;padding:2px 0">Quy chuẩn:</td><td style="color:#cbd5e1">TCVN 10380:2014</td></tr>
           </table>
         </div>
       `
     } else if (isJoint) {
       const isExp = p.type === 'ExpansionJoint'
+      const gapStr =
+        p.gapMillimeters !== null && p.gapMillimeters !== undefined && p.gapMillimeters !== ''
+          ? `Độ hở ${p.gapMillimeters} mm`
+          : 'Chưa có dữ liệu độ hở'
+      const spacingStr =
+        p.spacingMeters !== null && p.spacingMeters !== undefined && p.spacingMeters !== ''
+          ? `Cự ly ${p.spacingMeters} m`
+          : 'Theo thông số thiết kế'
       html = `
         <div style="font-family:Inter,sans-serif;min-width:210px;color:#f1f5f9">
           <div style="font-size:12.5px;font-weight:700;color:${isExp ? '#f97316' : '#67e8f9'};margin-bottom:6px;border-bottom:1px solid #27384e;padding-bottom:4px">
-            ${isExp ? 'KHE CO GIÃN NHIỆT (EXPANSION)' : 'KHE CO / KHE UỐN (CONTRACTION)'}
+            ${isExp ? 'KHE GIÃN BTXM (EXPANSION)' : 'KHE CO BTXM (CONTRACTION)'}
           </div>
           <table style="width:100%;font-size:12px;border-collapse:collapse">
             <tr><td style="color:#94a3b8;padding:2px 0">Lý trình:</td><td style="color:#fbbf24;font-weight:700">${p.chainage}</td></tr>
-            <tr><td style="color:#94a3b8;padding:2px 0">Kết cấu:</td><td style="color:#e2e8f0;font-weight:600">${isExp ? 'Chèn xốp bitum 20mm + thanh truyền lực' : 'Cắt ron 5mm + keo trám silicon'}</td></tr>
-            <tr><td style="color:#94a3b8;padding:2px 0">Khoảng cách:</td><td style="color:#34d399;font-weight:600">${isExp ? 'Định kỳ 100m' : 'Mỗi tấm 4.0m'}</td></tr>
+            ${isExp ? `<tr><td style="color:#94a3b8;padding:2px 0">Độ hở khe giãn:</td><td style="color:#e2e8f0;font-weight:600">${gapStr}</td></tr>` : ''}
+            <tr><td style="color:#94a3b8;padding:2px 0">Cự ly bố trí:</td><td style="color:#34d399;font-weight:600">${spacingStr}</td></tr>
           </table>
         </div>
       `
@@ -1086,7 +1099,7 @@ export default function CadMap({
             <tr><td style="color:#94a3b8;padding:2px 0">Đối tượng:</td><td style="color:#f8fafc;font-weight:600">${p.name || p.layer}</td></tr>
             <tr><td style="color:#94a3b8;padding:2px 0">Hình học:</td><td style="color:#38bdf8;font-weight:600">${feature.geometry?.type}</td></tr>
             ${p.cadEntity ? `<tr><td style="color:#94a3b8;padding:2px 0">Thực thể CAD:</td><td style="color:#e2e8f0;font-family:monospace;font-size:11.5px">${p.cadEntity}</td></tr>` : ''}
-            ${p.elevation ? `<tr><td style="color:#94a3b8;padding:2px 0">Cao độ (Z):</td><td style="color:#fbbf24;font-weight:600">${p.elevation} m</td></tr>` : ''}
+            ${p.elevation !== null && p.elevation !== undefined && p.elevation !== '' ? `<tr><td style="color:#94a3b8;padding:2px 0">Cao độ (Z):</td><td style="color:#fbbf24;font-weight:600">${p.elevation} m</td></tr>` : ''}
             <tr><td style="color:#94a3b8;padding:2px 0">Tọa độ GPS:</td><td style="color:#fbbf24;font-family:monospace;font-size:11.5px">${e.lngLat.lng.toFixed(6)}, ${e.lngLat.lat.toFixed(6)}</td></tr>
           </table>
         </div>
@@ -1100,7 +1113,7 @@ export default function CadMap({
           <table style="width:100%;font-size:12px;border-collapse:collapse">
             <tr><td style="color:#94a3b8;padding:2px 0">Phân loại:</td><td style="color:#e2e8f0;font-weight:600">${type}</td></tr>
             ${type === 'Vertex' ? `<tr><td style="color:#94a3b8;padding:2px 0">Tọa độ WGS84:</td><td style="color:#fbbf24;font-family:monospace;font-size:11.5px">${Number(p.lat).toFixed(6)}, ${Number(p.lng).toFixed(6)}</td></tr>` : ''}
-            ${type !== 'Vertex' && !isIsland ? `<tr><td style="color:#94a3b8;padding:2px 0">Bề rộng dải:</td><td style="color:#38bdf8;font-weight:700">${width} m</td></tr>` : ''}
+            ${type !== 'Vertex' && !isIsland ? `<tr><td style="color:#94a3b8;padding:2px 0">Bề rộng dải:</td><td style="color:#38bdf8;font-weight:700">${widthText}</td></tr>` : ''}
             ${isIsland ? `<tr><td style="color:#94a3b8;padding:2px 0">Kết cấu:</td><td style="color:#fbbf24;font-weight:600">Đảo tam giác / Bó vỉa hè</td></tr>` : ''}
             ${type !== 'Vertex' && !isIsland ? `<tr><td style="color:#94a3b8;padding:2px 0">Vật liệu:</td><td style="color:#34d399;font-weight:600">Bê tông xi măng</td></tr>` : ''}
             ${len ? `<tr><td style="color:#94a3b8;padding:2px 0">Chiều dài:</td><td style="color:#fbbf24;font-weight:700">${len}</td></tr>` : ''}

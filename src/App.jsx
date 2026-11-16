@@ -81,10 +81,15 @@ export default function App() {
   })
 
   const [roadParams, setRoadParams] = useState({
-    segmentLength: '100',
-    roadWidth: '7.0',
-    slabLength: '4.0',
-    laneCount: '2',
+    segmentLength: '',
+    roadWidth: '',
+    slabLength: '',
+    laneCount: '',
+    slabThicknessCentimeters: '',
+    contractionJointSpacingMeters: '',
+    expansionJointSpacingMeters: '',
+    expansionJointGapMillimeters: '',
+    dxfBtxmExtraction: null,
   })
 
   // Responsive auto-collapse of Right Inspector at <= 1360px so Center Viewport stays dominant
@@ -143,9 +148,7 @@ export default function App() {
     [roadParams]
   )
   const isSurfaceAreaProvisional = Boolean(ssotMetrics?.isSurfaceAreaProvisional)
-  const analyzedRoadWidth = Number(
-    ssotMetrics?.analyzedRoadWidth || normalizedParams.roadWidth
-  )
+  const analyzedRoadWidth = ssotMetrics?.analyzedRoadWidth ?? null
 
   const isWgs84Source =
     inspectorBridge.sourceDataKind === 'wgs84' ||
@@ -156,7 +159,10 @@ export default function App() {
       return 'Hệ thống đang phân tích bản vẽ CAD. Vui lòng chờ quá trình hoàn tất trước khi xuất dữ liệu.'
     }
     if (isSurfaceAreaProvisional) {
-      return `Bề rộng mặt đường đã đổi từ ${analyzedRoadWidth}m sang ${normalizedParams.roadWidth}m. Vui lòng bấm Cập Nhật & Dựng Lại Mặt Đường trước khi xuất dữ liệu chính thức.`
+      return `Bề rộng mặt đường đã đổi (${analyzedRoadWidth != null ? `${analyzedRoadWidth}m` : 'Chưa dựng'} → ${normalizedParams.roadWidth}m). Vui lòng bấm Cập Nhật & Dựng Lại Mặt Đường trước khi xuất dữ liệu chính thức.`
+    }
+    if (normalizedParams.pavementDesign && !normalizedParams.pavementDesign.valid) {
+      return normalizedParams.pavementDesign.errors[0]
     }
     // If source is already WGS-84, pure GeoJSON export does not require VN-2000 CRS
     if (isWgs84Source && targetFormat === 'geojson') {
@@ -325,14 +331,18 @@ export default function App() {
   const totalLengthVal = Number(
     ssotMetrics?.totalLengthMeters ?? analyticsData?.totalLengthMeters ?? 0
   )
-  const nominalAreaVal = Number(
-    ssotMetrics?.nominalAreaSqm ??
-      analyticsData?.totalAreaSqm ??
-      totalLengthVal * normalizedParams.roadWidth
-  )
-  const surfaceAreaVal = Number(
-    ssotMetrics?.surfaceAreaSqm ?? nominalAreaVal
-  )
+  const finiteOrNull = (v) =>
+    v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null
+  // Diện tích danh nghĩa chỉ có khi đủ L và B; diện tích hình học chỉ có khi tính từ polygon.
+  const nominalAreaVal =
+    finiteOrNull(ssotMetrics?.nominalAreaSqm) ??
+    (totalLengthVal > 0 && normalizedParams.roadWidth != null
+      ? Number((totalLengthVal * normalizedParams.roadWidth).toFixed(2))
+      : null)
+  const surfaceAreaVal = finiteOrNull(ssotMetrics?.surfaceAreaSqm)
+  const NO_DATA = 'Chưa có dữ liệu'
+  const fmtArea = (v) =>
+    v == null ? NO_DATA : `${v.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}m²`
 
   return (
     <div className="flex flex-col w-screen h-screen overflow-hidden bg-[#0B1220] text-[#E8EEF6] font-sans antialiased select-none">
@@ -861,13 +871,13 @@ export default function App() {
               </span>
               <span className="text-[#27384E]">|</span>
               <span className="tabular-nums">
-                B = <strong className="text-[#F06421]">{normalizedParams.roadWidth.toFixed(2)}m</strong>
+                B = <strong className="text-[#F06421]">{normalizedParams.roadWidth != null ? `${normalizedParams.roadWidth.toFixed(2)}m` : NO_DATA}</strong>
               </span>
               <span className="hidden sm:inline text-[#27384E]">|</span>
               <span className="hidden sm:inline tabular-nums">
                 S(L×B) ={' '}
                 <strong className="text-[#E8EEF6]">
-                  {nominalAreaVal.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}m²
+                  {fmtArea(nominalAreaVal)}
                 </strong>
               </span>
               <span className="hidden md:inline text-[#27384E]">|</span>
@@ -878,8 +888,8 @@ export default function App() {
                     isSurfaceAreaProvisional ? 'text-[#F59E0B]' : 'text-[#39B58A]'
                   }
                 >
-                  {surfaceAreaVal.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}m²
-                  {isSurfaceAreaProvisional ? ' (Tạm tính)' : ''}
+                  {fmtArea(surfaceAreaVal)}
+                  {surfaceAreaVal != null && isSurfaceAreaProvisional ? ' (Tạm tính)' : ''}
                 </strong>
               </span>
             </>

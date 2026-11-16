@@ -14,6 +14,10 @@ import {
   buildRoadGuardGeometryDraft,
   validateRoadGuardGeometryDraft,
 } from '../utils/crsTransformEngine'
+import {
+  PAVEMENT_DESIGN_FIELD_SPECS,
+  normalizeRoadParams,
+} from '../utils/roadEngineeringBuilder'
 
 export default function RoadGuardDraftExportModal({
   isOpen,
@@ -21,7 +25,7 @@ export default function RoadGuardDraftExportModal({
   geoJsonData,
   roadParams,
   isSurfaceAreaProvisional = false,
-  analyzedRoadWidth = 7.0,
+  analyzedRoadWidth = null,
   isCrsStale = false,
   crsLifecycleState = 'VALID_APPLIED',
 }) {
@@ -81,8 +85,15 @@ export default function RoadGuardDraftExportModal({
       ''
     setRoadCode(initialCode)
     setRoadName(initialName)
-    const w = Number(roadParams?.roadWidth || analyzedRoadWidth || 7.0)
-    setSurveyWidthMeters(String(Math.max(w, 12)))
+    const rawW =
+      roadParams?.roadWidth != null && Number(roadParams.roadWidth) > 0
+        ? Number(roadParams.roadWidth)
+        : analyzedRoadWidth != null && Number(analyzedRoadWidth) > 0
+        ? Number(analyzedRoadWidth)
+        : null
+    if (rawW != null) {
+      setSurveyWidthMeters(String(Math.max(rawW, 12)))
+    }
     if (props.recommendedUtmSrid === 32649) {
       setSourceCrs(32649)
     } else {
@@ -97,7 +108,12 @@ export default function RoadGuardDraftExportModal({
       .map((c) => [Number(c[0]), Number(c[1])])
   }, [chosenFeature])
 
-  const effectiveWidth = Number(roadParams?.roadWidth || analyzedRoadWidth || 7.0)
+  const effectiveWidth =
+    roadParams?.roadWidth != null && Number(roadParams.roadWidth) > 0
+      ? Number(roadParams.roadWidth)
+      : analyzedRoadWidth != null && Number(analyzedRoadWidth) > 0
+      ? Number(analyzedRoadWidth)
+      : null
 
   const draftBuildResult = useMemo(() => {
     if (!centerlineWgs84 || centerlineWgs84.length < 2) {
@@ -305,24 +321,10 @@ export default function RoadGuardDraftExportModal({
           {/* Form Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-[12.5px] font-semibold text-[#C0CEDF]">
-                  Mã tuyến đường (<code className="font-mono">roadCode</code>){' '}
-                  <span className="text-[#EF4444]">*</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRoadCode('GEO-RG-20261025-01')
-                    if (!roadName)
-                      setRoadName('Đường mẫu chuẩn bị cho RoadGuard')
-                    setChangeReason('Tạo hình học tuyến ban đầu từ dữ liệu mẫu')
-                  }}
-                  className="text-[11.5px] text-[#22B7C9] hover:underline cursor-pointer"
-                >
-                  Điền mã mẫu chuẩn
-                </button>
-              </div>
+              <label className="block text-[12.5px] font-semibold text-[#C0CEDF] mb-1">
+                Mã tuyến đường (<code className="font-mono">roadCode</code>){' '}
+                <span className="text-[#EF4444]">*</span>
+              </label>
               <input
                 type="text"
                 maxLength={80}
@@ -385,7 +387,7 @@ export default function RoadGuardDraftExportModal({
                 <input
                   type="number"
                   step="0.5"
-                  min={effectiveWidth}
+                  min={effectiveWidth ?? 0.5}
                   value={surveyWidthMeters}
                   onChange={(e) => setSurveyWidthMeters(e.target.value)}
                   className="w-full px-3 py-2 rounded bg-[#0B1220] border border-[#27384E] text-[13px] font-mono text-[#E8EEF6]"
@@ -467,7 +469,7 @@ export default function RoadGuardDraftExportModal({
                   widthMeters / surveyWidth:
                 </span>
                 <strong className="text-[#39B58A]">
-                  {effectiveWidth}m / {surveyWidthMeters}m
+                  {effectiveWidth != null ? `${effectiveWidth}m` : 'Chưa có dữ liệu'} / {surveyWidthMeters}m
                 </strong>
               </div>
             </div>
@@ -479,6 +481,45 @@ export default function RoadGuardDraftExportModal({
                 ))}
               </ul>
             )}
+          </div>
+
+          {/* Pavement Layout Handoff Reference Box */}
+          <div
+            data-testid="pavement-layout-handoff-note"
+            className="p-3.5 rounded-md bg-[#17263C]/70 border border-[#27384E] space-y-2 text-[12px]"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-bold text-[#22B7C9] uppercase tracking-wider text-[11.5px]">
+                Hướng dẫn chuyển thông số sang Pavement Layout (RoadGuard)
+              </span>
+              <span className="font-mono text-[11px] text-[#A9B9CE]">
+                POST .../pavement-plans
+              </span>
+            </div>
+            <p className="text-[#C0CEDF] leading-relaxed">
+              Hợp đồng <code className="font-mono text-[#E8EEF6]">GeometryDraftInput</code> chỉ nhận dữ liệu hình học tim tuyến (<code className="font-mono">coordinates</code>, <code className="font-mono">widthProfile</code>, <code className="font-mono">surveyWidthMeters</code>). Bốn thông số thiết kế BTXM thuộc đối tượng <code className="font-mono text-[#E8EEF6]">layout</code> khi tạo <strong>Pavement Plan</strong> trên hệ thống RoadGuard chính — kỹ sư dùng bảng đối chiếu dưới đây (hoặc từ báo cáo Excel) để nhập lại ở màn hình <strong>Pavement Layout</strong> sau khi đã xác nhận tuyến:
+            </p>
+            <div className="grid grid-cols-2 gap-2 pt-1 font-mono text-[11.5px]">
+              {PAVEMENT_DESIGN_FIELD_SPECS.map((spec) => {
+                const norm = normalizeRoadParams(roadParams)
+                const fState = norm.pavementDesign?.fields?.[spec.key]
+                return (
+                  <div
+                    key={spec.key}
+                    className="px-2.5 py-1.5 rounded bg-[#0B1220] border border-[#27384E] flex items-center justify-between gap-2"
+                  >
+                    <span className="text-[#8FA3BA] truncate" title={spec.label}>
+                      {spec.key}:
+                    </span>
+                    <strong className="text-[#E8EEF6] shrink-0">
+                      {fState?.isProvided && fState?.valid
+                        ? `${fState.value} (${spec.unit})`
+                        : 'null (Chưa có dữ liệu)'}
+                    </strong>
+                  </div>
+                )
+              })}
+            </div>
           </div>
 
           {/* JSON Preview */}

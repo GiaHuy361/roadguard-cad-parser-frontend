@@ -14,7 +14,6 @@ import {
 import {
   ScanLine,
   Layers,
-  TrendingDown,
   Ruler,
   Compass,
   ArrowRightLeft,
@@ -26,10 +25,12 @@ import {
 import {
   enrichGeoJsonWithEngineeringFeatures,
   normalizeRoadParams,
+  getPolylineCumulativeDistances,
+  formatChainage,
+  hasExplicitVertexZ,
 } from '../utils/roadEngineeringBuilder'
 
-/* Custom Tooltip for Cross-Section Crown */
-function CustomCrossSectionTooltip({ active, payload, is3DElevation }) {
+function CustomCrossSectionTooltip({ active, payload }) {
   if (active && payload && payload.length) {
     const data = payload[0].payload
     return (
@@ -44,25 +45,22 @@ function CustomCrossSectionTooltip({ active, payload, is3DElevation }) {
         }}
       >
         <p style={{ fontSize: '12px', fontWeight: 700, color: '#E8EEF6', marginBottom: 4 }}>
-          {data.pointName || (data.x < 0 ? 'Phần đường trái' : data.x > 0 ? 'Phần đường phải' : 'Tim đường')}
+          {data.pointName || (data.x < 0 ? 'Bên trái tim' : data.x > 0 ? 'Bên phải tim' : 'Tim tuyến')}
         </p>
         <p style={{ fontSize: '12px', color: '#A9B9CE', margin: '2px 0' }}>
-          Khoảng cách từ tim:{' '}
+          Khoảng cách ngang:{' '}
           <span style={{ color: '#22B7C9', fontFamily: 'monospace', fontWeight: 700 }}>
             {data.x > 0 ? `+${data.x}m` : `${data.x}m`}
           </span>
         </p>
         <p style={{ fontSize: '12px', color: '#A9B9CE', margin: '2px 0' }}>
-          {is3DElevation ? 'Cao độ thực tế Z:' : 'Cao độ tham chiếu ΔZ:'}{' '}
+          Cao độ Z:{' '}
           <span style={{ color: '#39B58A', fontFamily: 'monospace', fontWeight: 700 }}>
-            {Number(data.elevation).toFixed(3)} m
+            {data.elevation != null && Number.isFinite(Number(data.elevation))
+              ? `${Number(data.elevation).toFixed(3)} m`
+              : 'Chưa có dữ liệu'}
           </span>
         </p>
-        {data.slope && (
-          <p style={{ fontSize: '11px', color: '#F59E0B', marginTop: 4, fontWeight: 600 }}>
-            Độ dốc ngang thiết kế i: {data.slope}
-          </p>
-        )}
       </div>
     )
   }
@@ -72,181 +70,169 @@ function CustomCrossSectionTooltip({ active, payload, is3DElevation }) {
 export default function CrossSectionProfile({ geoJsonData, roadParams }) {
   const normalizedParams = useMemo(() => normalizeRoadParams(roadParams), [roadParams])
 
-  // Extract all station points from Single Source of Truth enriched GeoJSON
-  const { stations, hasAuthentic3DElevation } = useMemo(() => {
-    if (!geoJsonData?.features) return { stations: [], hasAuthentic3DElevation: false }
-    const { enrichedGeoJson, analytics } = enrichGeoJsonWithEngineeringFeatures(
+  const { profilePoints, hasAnyLongitudinalZ, crossSectionsByStation } = useMemo(() => {
+    if (!geoJsonData?.features) {
+      return { profilePoints: [], hasAnyLongitudinalZ: false, crossSectionsByStation: {} }
+    }
+    const { enrichedGeoJson } = enrichGeoJsonWithEngineeringFeatures(
       geoJsonData,
       normalizedParams
     )
     const features = enrichedGeoJson?.features || geoJsonData.features
-    const is3D = Boolean(
-      enrichedGeoJson?.hasAuthentic3DElevation || analytics?.hasAuthentic3DElevation
-    )
+    const csMap = geoJsonData?.crossSections || enrichedGeoJson?.crossSections || {}
 
-    const st = features.filter(
+    const stFeatures = features.filter(
       (f) => f.properties?.layerType === 'StationPoint' || f.properties?.type === 'StationMilestone'
     )
 
-    if (st.length > 0) {
-      const mapped = st.map((f, idx) => {
-        const coords = f.geometry?.coordinates || [0, 0, 0]
-        const rawZ =
-          coords[2] != null
-            ? Number(coords[2])
-            : f.properties?.elevation != null
-            ? Number(f.properties.elevation)
-            : f.properties?.z != null
-            ? Number(f.properties.z)
-            : 0.0
+    let points = []
+    if (stFeatures.length > 0) {
+      points = stFeatures.map((f, idx) => {
+        const coords = f.geometry?.coordinates || []
+        const hasCoordZ = hasExplicitVertexZ(coords)
+        const propElev = f.properties?.elevation
+        const hasPropZ =
+          propElev !== null &&
+          propElev !== undefined &&
+          propElev !== '' &&
+          Number.isFinite(Number(propElev))
+        const elevation = hasCoordZ
+          ? Number(Number(coords[2]).toFixed(3))
+          : hasPropZ
+          ? Number(Number(propElev).toFixed(3))
+          : null
 
         const distance =
           f.properties?.distance != null
             ? Number(f.properties.distance)
             : f.properties?.distMeters != null
             ? Number(f.properties.distMeters)
-            : idx * normalizedParams.segmentLength
+            : 0
 
         const name =
           f.properties?.stationName ||
           f.properties?.chainage ||
           f.properties?.name ||
-          `Km0+${String(Math.round(distance)).padStart(3, '0')}`
+          formatChainage(distance)
 
         return {
           id: idx,
           name,
-          distance,
-          elevation: Number.isFinite(rawZ) ? rawZ : 0.0,
+          distance: Number(distance.toFixed(2)),
+          elevation,
           lng: coords[0],
           lat: coords[1],
+          crossSectionPoints: Array.isArray(f.properties?.crossSectionPoints)
+            ? f.properties.crossSectionPoints
+            : Array.isArray(csMap[name])
+            ? csMap[name]
+            : null,
         }
       })
-      return { stations: mapped, hasAuthentic3DElevation: is3D }
+    } else {
+      // Fall back to centerline vertices when station step (segmentLength) is not configured
+      const clFeature = features.find(
+        (f) =>
+          (f.id === 'road-centerline-main' ||
+            f.properties?.layer === 'TIM_TUYEN_CHINH' ||
+            (!f.properties?.isBranch &&
+              (f.properties?.type === 'Centerline' || f.properties?.layerType === 'Centerline'))) &&
+          f.geometry?.type === 'LineString' &&
+          Array.isArray(f.geometry?.coordinates) &&
+          f.geometry.coordinates.length >= 2
+      )
+      if (clFeature) {
+        const coords = clFeature.geometry.coordinates
+        const totalPlanar = Number(enrichedGeoJson?.totalLengthMeters || geoJsonData?.totalLengthMeters || 0)
+        const { dists } = getPolylineCumulativeDistances(
+          coords,
+          totalPlanar > 0 ? totalPlanar : null
+        )
+        points = coords.map((pt, idx) => {
+          const dist = Number((dists[idx] || 0).toFixed(2))
+          const name = formatChainage(dist, idx === coords.length - 1)
+          const elevation = hasExplicitVertexZ(pt) ? Number(Number(pt[2]).toFixed(3)) : null
+          return {
+            id: idx,
+            name,
+            distance: dist,
+            elevation,
+            lng: pt[0],
+            lat: pt[1],
+            crossSectionPoints: Array.isArray(csMap[name]) ? csMap[name] : null,
+          }
+        })
+      }
     }
 
-    return { stations: [], hasAuthentic3DElevation: false }
+    const anyZ = points.some((p) => p.elevation !== null && Number.isFinite(p.elevation))
+    return {
+      profilePoints: points,
+      hasAnyLongitudinalZ: anyZ,
+      crossSectionsByStation: csMap,
+    }
   }, [geoJsonData, normalizedParams])
 
   const [selectedStationIndex, setSelectedStationIndex] = useState(0)
+  const activePoint = profilePoints[selectedStationIndex] || profilePoints[0] || null
 
-  const activeStation = stations[selectedStationIndex] || stations[0] || null
+  const authenticCrossSectionData = useMemo(() => {
+    if (!activePoint) return []
+    const rawPts =
+      activePoint.crossSectionPoints ||
+      crossSectionsByStation?.[activePoint.name] ||
+      null
+    if (!Array.isArray(rawPts) || rawPts.length < 2) return []
+    return rawPts
+      .filter(
+        (p) =>
+          p &&
+          p.x !== null &&
+          p.x !== undefined &&
+          Number.isFinite(Number(p.x)) &&
+          p.elevation !== null &&
+          p.elevation !== undefined &&
+          Number.isFinite(Number(p.elevation))
+      )
+      .map((p) => ({
+        x: Number(Number(p.x).toFixed(2)),
+        elevation: Number(Number(p.elevation).toFixed(3)),
+        pointName: p.pointName || null,
+      }))
+  }, [activePoint, crossSectionsByStation])
 
-  // Engineering calculations based on road width & standard 2% cross-slope (TCVN 4054:2005)
-  const roadWidth = normalizedParams.roadWidth
-  const halfWidth = roadWidth / 2
-  const shoulderWidth = 0.75
-  const crossSlope = 0.02 // 2.0%
-  const shoulderSlope = 0.04 // 4.0%
-  const slabThickness = 0.22 // 22cm BTXM
-
-  const centerZ = activeStation?.elevation ?? 0
-  const leftEdgeZ = centerZ - halfWidth * crossSlope
-  const rightEdgeZ = centerZ - halfWidth * crossSlope
-  const leftShoulderZ = leftEdgeZ - shoulderWidth * shoulderSlope
-  const rightShoulderZ = rightEdgeZ - shoulderWidth * shoulderSlope
-
-  // Cross section data points for Recharts AreaChart
-  const crossSectionData = useMemo(() => {
-    if (!activeStation) return []
-    const totalHalf = halfWidth + shoulderWidth
-    return [
-      {
-        x: -Number(totalHalf.toFixed(2)),
-        elevation: Number(leftShoulderZ.toFixed(3)),
-        subbase: Number((leftShoulderZ - slabThickness).toFixed(3)),
-        pointName: 'Mép lề gia cố trái',
-        slope: '-4.0% (Lề mẫu TCVN)',
-      },
-      {
-        x: -Number(halfWidth.toFixed(2)),
-        elevation: Number(leftEdgeZ.toFixed(3)),
-        subbase: Number((leftEdgeZ - slabThickness).toFixed(3)),
-        pointName: 'Mép mặt đường BTXM trái',
-        slope: '-2.0%',
-      },
-      {
-        x: -Number((halfWidth / 2).toFixed(2)),
-        elevation: Number((centerZ - (halfWidth / 2) * crossSlope).toFixed(3)),
-        subbase: Number((centerZ - (halfWidth / 2) * crossSlope - slabThickness).toFixed(3)),
-        pointName: 'Dải tấm BTXM bên trái',
-        slope: '-2.0%',
-      },
-      {
-        x: 0,
-        elevation: Number(centerZ.toFixed(3)),
-        subbase: Number((centerZ - slabThickness).toFixed(3)),
-        pointName: 'Tim tuyến (Đỉnh mui luyện)',
-        slope: '0.0% (Tim đường)',
-      },
-      {
-        x: Number((halfWidth / 2).toFixed(2)),
-        elevation: Number((centerZ - (halfWidth / 2) * crossSlope).toFixed(3)),
-        subbase: Number((centerZ - (halfWidth / 2) * crossSlope - slabThickness).toFixed(3)),
-        pointName: 'Dải tấm BTXM bên phải',
-        slope: '-2.0%',
-      },
-      {
-        x: Number(halfWidth.toFixed(2)),
-        elevation: Number(rightEdgeZ.toFixed(3)),
-        subbase: Number((rightEdgeZ - slabThickness).toFixed(3)),
-        pointName: 'Mép mặt đường BTXM phải',
-        slope: '-2.0%',
-      },
-      {
-        x: Number(totalHalf.toFixed(2)),
-        elevation: Number(rightShoulderZ.toFixed(3)),
-        subbase: Number((rightShoulderZ - slabThickness).toFixed(3)),
-        pointName: 'Mép lề gia cố phải',
-        slope: '-4.0% (Lề mẫu TCVN)',
-      },
-    ]
-  }, [
-    activeStation,
-    centerZ,
-    halfWidth,
-    shoulderWidth,
-    crossSlope,
-    slabThickness,
-    leftEdgeZ,
-    rightEdgeZ,
-    leftShoulderZ,
-    rightShoulderZ,
-  ])
-
-  // Longitudinal Profile data across all stations
-  const longitudinalData = useMemo(() => {
-    return stations.map((s, i) => ({
-      index: i,
-      stationName: s.name,
-      distance: s.distance,
-      elevation: Number(s.elevation.toFixed(3)),
-    }))
-  }, [stations])
-
-  if (!geoJsonData || stations.length === 0 || !activeStation) {
+  if (!geoJsonData || profilePoints.length === 0 || !activePoint) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center gap-3 bg-[#0B1220] p-6 text-center">
+      <div
+        data-testid="profile-empty-state"
+        className="w-full h-full flex flex-col items-center justify-center gap-3 bg-[#0B1220] p-6 text-center"
+      >
         <div className="w-14 h-14 rounded-2xl bg-[#111D2E] border border-[#27384E] flex items-center justify-center text-[#22B7C9]">
           <ScanLine size={28} />
         </div>
         <p className="text-[15px] font-bold text-[#E8EEF6]">
-          Chưa có dữ liệu trắc ngang cọc lý trình
+          Chưa có dữ liệu
         </p>
         <p className="text-[13px] text-[#A9B9CE] max-w-md">
           Vui lòng nạp bản vẽ CAD (`.dxf`) hoặc tọa độ VN-2000 ở bảng bên trái và bấm{' '}
-          <strong className="text-[#F06421]">Phân Tích & Dựng Tuyến</strong> để tạo biểu đồ mặt cắt ngang.
+          <strong className="text-[#F06421]">Phân Tích &amp; Dựng Tuyến</strong>.
         </p>
       </div>
     )
   }
 
-  const yDomainMin = Number((leftShoulderZ - slabThickness - 0.15).toFixed(2))
-  const yDomainMax = Number((centerZ + 0.15).toFixed(2))
+  const activeHasZ = activePoint.elevation !== null && Number.isFinite(activePoint.elevation)
+  const roadWidth = normalizedParams.roadWidth
+  const slabThickness = normalizedParams.slabThicknessCentimeters
+  const effSlabLength = normalizedParams.effectiveSlabLength
+  const expJointSpacing = normalizedParams.expansionJointSpacingMeters
 
   return (
-    <div className="w-full h-full flex flex-col overflow-y-auto bg-[#0B1220] p-6 text-[#E8EEF6]">
-      {/* ── Header & Station Selector ────────────────────────────── */}
+    <div
+      data-testid="cross-section-profile-view"
+      className="w-full h-full flex flex-col overflow-y-auto bg-[#0B1220] p-6 text-[#E8EEF6]"
+    >
+      {/* ── Header & Point/Station Selector ────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-4 pb-4 mb-4 border-b border-[#27384E]">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-[#111D2E] border border-[#27384E] flex items-center justify-center text-[#22B7C9] shrink-0">
@@ -255,29 +241,34 @@ export default function CrossSectionProfile({ geoJsonData, roadParams }) {
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
               <h2 className="text-[16px] font-bold text-[#E8EEF6]">
-                Mặt Cắt Ngang & Hồ Sơ Kỹ Thuật Tuyến
+                Mặt Cắt &amp; Hồ Sơ Kỹ Thuật Tuyến
               </h2>
-              {hasAuthentic3DElevation ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11.5px] font-semibold bg-[#39B58A]/15 text-[#39B58A] border border-[#39B58A]/40">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Cao độ 3D từ bản vẽ CAD
+              {hasAnyLongitudinalZ ? (
+                <span
+                  data-testid="profile-elevation-badge"
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11.5px] font-semibold bg-[#39B58A]/15 text-[#39B58A] border border-[#39B58A]/40"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Có cao độ tim tuyến (Z) có căn cứ
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11.5px] font-semibold bg-[#F59E0B]/15 text-[#F59E0B] border border-[#F59E0B]/40">
-                  <Info className="w-3.5 h-3.5" /> Chế độ Bản vẽ 2D (Cao độ & độ dốc cấu hình mẫu TCVN)
+                <span
+                  data-testid="profile-elevation-badge"
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11.5px] font-semibold bg-[#17263C] text-[#A9B9CE] border border-[#27384E]"
+                >
+                  <Info className="w-3.5 h-3.5" /> Bản vẽ 2D — Cao độ Z: Chưa có dữ liệu
                 </span>
               )}
             </div>
             <p className="text-[12.5px] text-[#A9B9CE] mt-0.5">
-              Mô phỏng kết cấu mặt đường BTXM B = {roadWidth.toFixed(2)}m ({normalizedParams.laneCount} dải ×{' '}
-              {normalizedParams.slabWidth.toFixed(2)}m) theo TCVN 4054:2005
+              Chỉ hiển thị cao độ trắc dọc và mặt cắt ngang khi có dữ liệu thực tế từ bản vẽ hoặc tọa độ đầu vào (không dùng cao độ tham chiếu 0 m hay mặt cắt mẫu).
             </p>
           </div>
         </div>
 
-        {/* Station Select Dropdown */}
+        {/* Station / Vertex Select Dropdown */}
         <div className="flex items-center gap-2.5">
           <span className="text-[12.5px] font-semibold text-[#A9B9CE]">
-            Chọn cọc lý trình:
+            Điểm lý trình:
           </span>
           <div className="relative">
             <select
@@ -285,9 +276,12 @@ export default function CrossSectionProfile({ geoJsonData, roadParams }) {
               onChange={(e) => setSelectedStationIndex(Number(e.target.value))}
               className="appearance-none bg-[#111D2E] border border-[#27384E] hover:border-[#22B7C9] text-[#E8EEF6] text-[13px] font-mono font-bold rounded-lg py-2 pl-3.5 pr-9 focus:outline-none focus:border-[#22B7C9] cursor-pointer tabular-nums"
             >
-              {stations.map((s, idx) => (
+              {profilePoints.map((s, idx) => (
                 <option key={s.id ?? idx} value={idx} className="bg-[#111D2E] text-[#E8EEF6]">
-                  {s.name} (L = {s.distance}m) — Z: {Number(s.elevation).toFixed(3)}m
+                  {s.name} (L = {s.distance}m) — Z:{' '}
+                  {s.elevation !== null && Number.isFinite(s.elevation)
+                    ? `${Number(s.elevation).toFixed(3)}m`
+                    : 'Chưa có dữ liệu'}
                 </option>
               ))}
             </select>
@@ -299,283 +293,299 @@ export default function CrossSectionProfile({ geoJsonData, roadParams }) {
         </div>
       </div>
 
-      {/* ── Explicit 2D vs 3D Elevation Provenance Notice ────────── */}
-      {!hasAuthentic3DElevation && (
-        <div className="mb-5 p-3.5 rounded-xl bg-[#111D2E] border border-[#F59E0B]/40 flex items-start gap-3">
-          <Info className="w-4 h-4 text-[#F59E0B] shrink-0 mt-0.5" />
-          <div className="text-[12.5px] text-[#E8EEF6] leading-relaxed">
-            <strong className="text-[#F59E0B]">Lưu ý nguồn dữ liệu cao độ (Bản vẽ 2D):</strong>{' '}
-            Dữ liệu đầu vào hiện chỉ chứa tọa độ mặt bằng 2D (chưa có cao độ khảo sát thực địa Z ≠ 0). Mặt cắt ngang bên dưới sử dụng{' '}
-            <strong>mốc cao độ tim tham chiếu Z₀ = 0.000 m</strong> kết hợp cấu hình thiết kế mẫu TCVN 4054:2005 (i_mặt = 2.0%, i_lề = 4.0%, chiều dày tấm BTXM 22.0 cm).
-          </div>
-        </div>
-      )}
-
-      {/* ── Engineering Stat Cards ───────────────────────────────── */}
+      {/* ── Verified Engineering Stat Cards (No hardcoded template values) ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-5">
-        <div className="p-3.5 rounded-xl bg-[#111D2E] border border-[#27384E]">
+        <div
+          data-testid="profile-stat-elevation"
+          className="p-3.5 rounded-xl bg-[#111D2E] border border-[#27384E]"
+        >
           <div className="flex items-center justify-between mb-1">
             <span className="text-[12px] font-semibold text-[#A9B9CE]">
-              {hasAuthentic3DElevation ? 'Cao độ tim tuyến (Z)' : 'Cao độ tim tham chiếu'}
+              Cao độ tim tuyến (Z)
             </span>
             <Compass size={14} className="text-[#22B7C9]" />
           </div>
-          <p className="text-[18px] font-bold font-mono tabular-nums text-[#22B7C9]">
-            {Number(centerZ).toFixed(3)} <span className="text-[12px] font-normal">m</span>
-          </p>
-          <p className="text-[11px] text-[#7E92AA] mt-0.5">
-            {hasAuthentic3DElevation ? 'Từ tọa độ Z thực tế' : 'Mốc 0.000m (Bản vẽ 2D)'}
-          </p>
+          {activeHasZ ? (
+            <>
+              <p className="text-[18px] font-bold font-mono tabular-nums text-[#22B7C9]">
+                {Number(activePoint.elevation).toFixed(3)}{' '}
+                <span className="text-[12px] font-normal">m</span>
+              </p>
+              <p className="text-[11px] text-[#7E92AA] mt-0.5">
+                Tại {activePoint.name} (L = {activePoint.distance}m)
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-[15px] font-semibold text-[#8FA3BA] italic mt-1">
+                Chưa có dữ liệu
+              </p>
+              <p className="text-[11px] text-[#7E92AA] mt-0.5">
+                Điểm lý trình hiện tại không có Z
+              </p>
+            </>
+          )}
         </div>
 
-        <div className="p-3.5 rounded-xl bg-[#111D2E] border border-[#27384E]">
+        <div
+          data-testid="profile-stat-road-width"
+          className="p-3.5 rounded-xl bg-[#111D2E] border border-[#27384E]"
+        >
           <div className="flex items-center justify-between mb-1">
             <span className="text-[12px] font-semibold text-[#A9B9CE]">
               Bề rộng mặt đường (B)
             </span>
             <Ruler size={14} className="text-[#F06421]" />
           </div>
-          <p className="text-[18px] font-bold font-mono tabular-nums text-[#E8EEF6]">
-            {roadWidth.toFixed(2)} <span className="text-[12px] font-normal text-[#F06421]">m</span>
-          </p>
-          <p className="text-[11px] text-[#7E92AA] mt-0.5 tabular-nums">
-            {normalizedParams.laneCount} dải tấm × {normalizedParams.slabWidth.toFixed(2)}m
-          </p>
+          {roadWidth != null ? (
+            <>
+              <p className="text-[18px] font-bold font-mono tabular-nums text-[#E8EEF6]">
+                {roadWidth.toFixed(2)}{' '}
+                <span className="text-[12px] font-normal text-[#F06421]">m</span>
+              </p>
+              <p className="text-[11px] text-[#7E92AA] mt-0.5 tabular-nums">
+                {normalizedParams.laneCount != null && normalizedParams.slabWidth != null
+                  ? `${normalizedParams.laneCount} dải × ${normalizedParams.slabWidth.toFixed(2)}m`
+                  : 'Số dải tấm: Chưa có dữ liệu'}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-[15px] font-semibold text-[#8FA3BA] italic mt-1">
+                Chưa có dữ liệu
+              </p>
+              <p className="text-[11px] text-[#7E92AA] mt-0.5">
+                Chưa khai báo bề rộng mặt đường
+              </p>
+            </>
+          )}
         </div>
 
-        <div className="p-3.5 rounded-xl bg-[#111D2E] border border-[#27384E]">
+        <div
+          data-testid="profile-stat-slab-thickness"
+          className="p-3.5 rounded-xl bg-[#111D2E] border border-[#27384E]"
+        >
           <div className="flex items-center justify-between mb-1">
             <span className="text-[12px] font-semibold text-[#A9B9CE]">
-              Độ dốc ngang mui luyện (i)
-            </span>
-            <TrendingDown size={14} className="text-[#39B58A]" />
-          </div>
-          <p className="text-[18px] font-bold font-mono tabular-nums text-[#39B58A]">
-            2.0% <span className="text-[12px] font-normal text-[#A9B9CE]">/ Lề 4.0%</span>
-          </p>
-          <p className="text-[11px] text-[#7E92AA] mt-0.5">
-            Cấu hình tiêu chuẩn TCVN 4054
-          </p>
-        </div>
-
-        <div className="p-3.5 rounded-xl bg-[#111D2E] border border-[#27384E]">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[12px] font-semibold text-[#A9B9CE]">
-              Kết cấu tấm BTXM
+              Chiều dày tấm BTXM
             </span>
             <Layers size={14} className="text-[#F59E0B]" />
           </div>
-          <p className="text-[18px] font-bold font-mono tabular-nums text-[#E8EEF6]">
-            22.0 <span className="text-[12px] font-normal text-[#F59E0B]">cm</span>
-          </p>
-          <p className="text-[11px] text-[#7E92AA] mt-0.5 tabular-nums">
-            Chiều dài tấm L = {normalizedParams.slabLength.toFixed(1)}m
-          </p>
+          {slabThickness != null ? (
+            <>
+              <p className="text-[18px] font-bold font-mono tabular-nums text-[#E8EEF6]">
+                {slabThickness}{' '}
+                <span className="text-[12px] font-normal text-[#F59E0B]">cm</span>
+              </p>
+              <p className="text-[11px] text-[#7E92AA] mt-0.5">
+                {normalizedParams.pavementDesign?.fields?.slabThicknessCentimeters?.provenanceLabel ||
+                  'Theo hồ sơ thiết kế'}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-[15px] font-semibold text-[#8FA3BA] italic mt-1">
+                Chưa có dữ liệu
+              </p>
+              <p className="text-[11px] text-[#7E92AA] mt-0.5">
+                Chưa có thông số chiều dày BTXM
+              </p>
+            </>
+          )}
+        </div>
+
+        <div
+          data-testid="profile-stat-joint-spacing"
+          className="p-3.5 rounded-xl bg-[#111D2E] border border-[#27384E]"
+        >
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[12px] font-semibold text-[#A9B9CE]">
+              Cự ly khe co / Khe giãn
+            </span>
+            <ArrowRightLeft size={14} className="text-[#39B58A]" />
+          </div>
+          {effSlabLength != null || expJointSpacing != null ? (
+            <>
+              <p className="text-[15px] font-bold font-mono tabular-nums text-[#E8EEF6]">
+                Khe co: {effSlabLength != null ? `${effSlabLength} m` : 'Chưa có dữ liệu'}
+              </p>
+              <p className="text-[11px] text-[#7E92AA] mt-0.5 font-mono tabular-nums">
+                Khe giãn: {expJointSpacing != null ? `${expJointSpacing} m` : 'Chưa có dữ liệu'}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-[15px] font-semibold text-[#8FA3BA] italic mt-1">
+                Chưa có dữ liệu
+              </p>
+              <p className="text-[11px] text-[#7E92AA] mt-0.5">
+                Chưa có cự ly khe co / khe giãn
+              </p>
+            </>
+          )}
         </div>
       </div>
 
-      {/* ── Main Chart: Road Crown Cross-Section ─────────────────── */}
-      <div className="rounded-xl p-5 mb-5 bg-[#111D2E] border border-[#27384E]">
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-          <div className="flex items-center gap-2">
-            <ArrowRightLeft size={15} className="text-[#22B7C9]" />
-            <h3 className="text-[14px] font-bold text-[#E8EEF6]">
-              Trắc ngang Mui luyện tại cọc {activeStation.name} (Lý trình: {activeStation.distance}m)
-            </h3>
-          </div>
-          <div className="flex items-center gap-4 text-[12px] text-[#A9B9CE]">
-            <span className="flex items-center gap-1.5">
-              <span className="w-3.5 h-2 rounded-sm bg-[#22B7C9] inline-block" /> Mặt đường BTXM (B = {roadWidth}m)
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-3.5 h-2 rounded-sm bg-[#7E92AA] inline-block" /> Đáy tấm BTXM (22cm)
-            </span>
-          </div>
-        </div>
-
-        <div style={{ height: '290px', width: '100%' }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={crossSectionData} margin={{ top: 20, right: 30, left: 10, bottom: 20 }}>
-              <defs>
-                <linearGradient id="pavementGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#22B7C9" stopOpacity={0.45} />
-                  <stop offset="95%" stopColor="#22B7C9" stopOpacity={0.05} />
-                </linearGradient>
-                <linearGradient id="subbaseGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#27384E" stopOpacity={0.6} />
-                  <stop offset="95%" stopColor="#0B1220" stopOpacity={0.15} />
-                </linearGradient>
-              </defs>
-
-              <CartesianGrid strokeDasharray="3 3" stroke="#27384E" />
-
-              <XAxis
-                dataKey="x"
-                stroke="#A9B9CE"
-                tickFormatter={(v) => `${v}m`}
-                fontSize={11.5}
-                label={{
-                  value: 'Khoảng cách ngang tính từ tim tuyến (m)',
-                  position: 'insideBottom',
-                  offset: -10,
-                  fill: '#A9B9CE',
-                  fontSize: 12,
-                }}
-              />
-
-              <YAxis
-                stroke="#A9B9CE"
-                domain={[yDomainMin, yDomainMax]}
-                tickFormatter={(v) => `${Number(v).toFixed(2)}m`}
-                fontSize={11.5}
-                label={{
-                  value: hasAuthentic3DElevation ? 'Cao độ Z (m)' : 'Cao độ tham chiếu ΔZ (m)',
-                  angle: -90,
-                  position: 'insideLeft',
-                  fill: '#A9B9CE',
-                  fontSize: 12,
-                }}
-              />
-
-              <Tooltip content={<CustomCrossSectionTooltip is3DElevation={hasAuthentic3DElevation} />} />
-
-              {/* Centerline vertical marker */}
-              <ReferenceLine
-                x={0}
-                stroke="#F06421"
-                strokeDasharray="4 4"
-                strokeWidth={1.5}
-                label={{
-                  value: 'Tim tuyến (CL)',
-                  position: 'top',
-                  fill: '#F06421',
-                  fontSize: 11,
-                  fontWeight: 700,
-                }}
-              />
-
-              {/* Edge Left marker */}
-              <ReferenceLine
-                x={-Number(halfWidth.toFixed(2))}
-                stroke="#22B7C9"
-                strokeDasharray="2 2"
-                strokeWidth={1}
-                label={{
-                  value: `Mép trái (-${halfWidth.toFixed(2)}m)`,
-                  position: 'top',
-                  fill: '#22B7C9',
-                  fontSize: 10.5,
-                }}
-              />
-
-              {/* Edge Right marker */}
-              <ReferenceLine
-                x={Number(halfWidth.toFixed(2))}
-                stroke="#22B7C9"
-                strokeDasharray="2 2"
-                strokeWidth={1}
-                label={{
-                  value: `Mép phải (+${halfWidth.toFixed(2)}m)`,
-                  position: 'top',
-                  fill: '#22B7C9',
-                  fontSize: 10.5,
-                }}
-              />
-
-              {/* Surface Crown */}
-              <Area
-                type="monotone"
-                dataKey="elevation"
-                stroke="#22B7C9"
-                strokeWidth={2.5}
-                fill="url(#pavementGrad)"
-                name="Cao độ mặt đường"
-              />
-
-              {/* Subbase */}
-              <Area
-                type="monotone"
-                dataKey="subbase"
-                stroke="#7E92AA"
-                strokeWidth={1.5}
-                strokeDasharray="3 3"
-                fill="url(#subbaseGrad)"
-                name="Đáy tấm BTXM"
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* ── Longitudinal Profile Preview (Trắc dọc cao độ toàn tuyến) ── */}
-      <div className="rounded-xl p-5 bg-[#111D2E] border border-[#27384E]">
+      {/* ── Longitudinal Profile Section (Trắc dọc cao độ tim tuyến) ── */}
+      <div
+        data-testid="longitudinal-profile-card"
+        className="rounded-xl p-5 mb-5 bg-[#111D2E] border border-[#27384E]"
+      >
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
           <div className="flex items-center gap-2">
             <Compass size={15} className="text-[#F06421]" />
             <h3 className="text-[14px] font-bold text-[#E8EEF6]">
-              Trắc dọc Tim Tuyến ({stations.length} cọc lý trình — Bước cọc {normalizedParams.segmentLength}m)
+              Trắc dọc Tim Tuyến ({profilePoints.length} điểm lý trình)
             </h3>
           </div>
           <span className="text-[12px] text-[#A9B9CE]">
-            Nhấp vào điểm cọc trên biểu đồ để xem mặt cắt ngang tại cọc đó
+            {hasAnyLongitudinalZ
+              ? 'Hiển thị tại các đoạn có dữ liệu cao độ Z có căn cứ'
+              : 'Chưa có dữ liệu'}
           </span>
         </div>
 
-        <div style={{ height: '185px', width: '100%' }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={longitudinalData}
-              onClick={(e) => {
-                if (e && e.activeTooltipIndex != null) {
-                  setSelectedStationIndex(e.activeTooltipIndex)
-                }
-              }}
-              margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="#27384E" />
-              <XAxis dataKey="stationName" stroke="#A9B9CE" fontSize={11} />
-              <YAxis
-                stroke="#A9B9CE"
-                tickFormatter={(v) => `${Number(v).toFixed(1)}m`}
-                fontSize={11}
-                domain={['auto', 'auto']}
-              />
-              <Tooltip
-                content={({ active, payload }) => {
-                  if (active && payload && payload.length) {
-                    const d = payload[0].payload
-                    return (
-                      <div
-                        style={{
-                          background: '#111D2E',
-                          border: '1px solid #27384E',
-                          borderRadius: '8px',
-                          padding: '8px 12px',
-                          fontSize: '12px',
-                        }}
-                      >
-                        <p style={{ color: '#F06421', fontWeight: 700 }}>{d.stationName}</p>
-                        <p style={{ color: '#E8EEF6' }}>Lý trình: {d.distance}m</p>
-                        <p style={{ color: '#22B7C9' }}>
-                          {hasAuthentic3DElevation ? 'Cao độ Z:' : 'Cao độ tham chiếu:'} {d.elevation}m
-                        </p>
-                      </div>
-                    )
+        {hasAnyLongitudinalZ ? (
+          <div data-testid="longitudinal-profile-chart" style={{ height: '220px', width: '100%' }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={profilePoints}
+                onClick={(e) => {
+                  if (e && e.activeTooltipIndex != null) {
+                    setSelectedStationIndex(e.activeTooltipIndex)
                   }
-                  return null
                 }}
-              />
-              <Line
-                type="monotone"
-                dataKey="elevation"
-                stroke="#F06421"
-                strokeWidth={2.5}
-                dot={{ r: 4, fill: '#F06421', stroke: '#0B1220' }}
-                activeDot={{ r: 6, fill: '#22B7C9', stroke: '#fff' }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+                margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#27384E" />
+                <XAxis dataKey="name" stroke="#A9B9CE" fontSize={11} />
+                <YAxis
+                  stroke="#A9B9CE"
+                  tickFormatter={(v) => `${Number(v).toFixed(2)}m`}
+                  fontSize={11}
+                  domain={['auto', 'auto']}
+                />
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const d = payload[0].payload
+                      return (
+                        <div
+                          style={{
+                            background: '#111D2E',
+                            border: '1px solid #27384E',
+                            borderRadius: '8px',
+                            padding: '8px 12px',
+                            fontSize: '12px',
+                          }}
+                        >
+                          <p style={{ color: '#F06421', fontWeight: 700 }}>{d.name}</p>
+                          <p style={{ color: '#E8EEF6' }}>Lý trình: {d.distance}m</p>
+                          <p style={{ color: '#22B7C9' }}>
+                            Cao độ Z:{' '}
+                            {d.elevation !== null && Number.isFinite(d.elevation)
+                              ? `${Number(d.elevation).toFixed(3)} m`
+                              : 'Chưa có dữ liệu'}
+                          </p>
+                        </div>
+                      )
+                    }
+                    return null
+                  }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="elevation"
+                  connectNulls={false}
+                  stroke="#F06421"
+                  strokeWidth={2.5}
+                  dot={{ r: 4, fill: '#F06421', stroke: '#0B1220' }}
+                  activeDot={{ r: 6, fill: '#22B7C9', stroke: '#fff' }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div
+            data-testid="longitudinal-profile-empty"
+            className="py-10 px-4 rounded-lg bg-[#0B1220]/70 border border-[#27384E] text-center space-y-1"
+          >
+            <div className="text-[14px] font-bold text-[#E8EEF6]">
+              Chưa có dữ liệu
+            </div>
+            <div className="text-[12px] text-[#8FA3BA]">
+              Tim tuyến hiện tại chỉ có tọa độ phẳng 2D (X, Y), chưa có cao độ Z có căn cứ để dựng trắc dọc.
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Cross-Section Section (Chỉ dựng khi có dữ liệu mặt cắt ngang tương ứng) ── */}
+      <div
+        data-testid="cross-section-card"
+        className="rounded-xl p-5 bg-[#111D2E] border border-[#27384E]"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <div className="flex items-center gap-2">
+            <ArrowRightLeft size={15} className="text-[#22B7C9]" />
+            <h3 className="text-[14px] font-bold text-[#E8EEF6]">
+              Mặt cắt ngang tại {activePoint.name} (Lý trình: {activePoint.distance}m)
+            </h3>
+          </div>
+          <span className="text-[12px] text-[#A9B9CE]">
+            {authenticCrossSectionData.length >= 2
+              ? `${authenticCrossSectionData.length} điểm mặt cắt ngang thực tế`
+              : 'Chưa có dữ liệu'}
+          </span>
         </div>
+
+        {authenticCrossSectionData.length >= 2 ? (
+          <div data-testid="cross-section-chart" style={{ height: '270px', width: '100%' }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={authenticCrossSectionData}
+                margin={{ top: 20, right: 30, left: 10, bottom: 20 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#27384E" />
+                <XAxis
+                  dataKey="x"
+                  stroke="#A9B9CE"
+                  tickFormatter={(v) => `${v}m`}
+                  fontSize={11.5}
+                />
+                <YAxis
+                  stroke="#A9B9CE"
+                  domain={['auto', 'auto']}
+                  tickFormatter={(v) => `${Number(v).toFixed(2)}m`}
+                  fontSize={11.5}
+                />
+                <Tooltip content={<CustomCrossSectionTooltip />} />
+                <ReferenceLine x={0} stroke="#F06421" strokeDasharray="4 4" strokeWidth={1.5} />
+                <Area
+                  type="monotone"
+                  dataKey="elevation"
+                  stroke="#22B7C9"
+                  strokeWidth={2.5}
+                  fill="#22B7C9"
+                  fillOpacity={0.2}
+                  name="Cao độ mặt cắt ngang"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div
+            data-testid="cross-section-empty"
+            className="py-10 px-4 rounded-lg bg-[#0B1220]/70 border border-[#27384E] text-center space-y-1"
+          >
+            <div className="text-[14px] font-bold text-[#E8EEF6]">
+              Chưa có dữ liệu
+            </div>
+            <div className="text-[12px] text-[#8FA3BA]">
+              Chưa có dữ liệu điểm mặt cắt ngang tương ứng tại {activePoint.name}. Hệ thống không tự dựng mặt cắt ngang giả định.
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

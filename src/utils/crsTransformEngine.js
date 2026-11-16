@@ -597,7 +597,13 @@ function validateLngLatTuple(coord, indexLabel = '') {
     }
   }
   const res = [Number(lon.toFixed(8)), Number(lat.toFixed(8))]
-  if (coord.length >= 3 && Number.isFinite(Number(coord[2]))) {
+  if (
+    coord.length >= 3 &&
+    coord[2] !== null &&
+    coord[2] !== undefined &&
+    String(coord[2]).trim() !== '' &&
+    Number.isFinite(Number(coord[2]))
+  ) {
     res.push(Number(Number(coord[2]).toFixed(3)))
   }
   return { valid: true, coord: res }
@@ -662,6 +668,7 @@ export function parseWgs84CoordinateText(rawText, axisOrder = 'LON_LAT') {
 
     let a = Number(nums[0])
     let b = Number(nums[1])
+    let zVal = null
     // If 3+ numbers and first is an integer index (1, 2, 3...) while nums[1], nums[2] look like coordinates
     if (
       nums.length >= 3 &&
@@ -672,6 +679,11 @@ export function parseWgs84CoordinateText(rawText, axisOrder = 'LON_LAT') {
     ) {
       a = Number(nums[1])
       b = Number(nums[2])
+      if (nums.length >= 4 && Number.isFinite(Number(nums[3]))) {
+        zVal = Number(nums[3])
+      }
+    } else if (nums.length >= 3 && Number.isFinite(Number(nums[2]))) {
+      zVal = Number(nums[2])
     }
 
     let lon, lat
@@ -693,7 +705,7 @@ export function parseWgs84CoordinateText(rawText, axisOrder = 'LON_LAT') {
       continue
     }
 
-    const check = validateLngLatTuple([lon, lat], `dòng ${lineNo}`)
+    const check = validateLngLatTuple(zVal !== null ? [lon, lat, zVal] : [lon, lat], `dòng ${lineNo}`)
     if (!check.valid) {
       if (check.swapped) swappedLines.push(lineNo)
       else badLines.push(lineNo)
@@ -1120,7 +1132,7 @@ export function parseAndValidateWgs84GeoJson(inputGeoJson, options = {}) {
 export function buildStudioGeoJsonFromWgs84Import(
   importResult,
   selectedCandidateId = null,
-  roadWidth = 7.0,
+  roadWidth = null,
   crsConfig = null
 ) {
   if (!importResult || !importResult.success) return null
@@ -1138,16 +1150,34 @@ export function buildStudioGeoJsonFromWgs84Import(
     null
 
   const checkVn = validateVn2000Config(crsConfig)
-  const w = Math.max(0.5, Number(roadWidth) || 7.0)
-  const halfW = w / 2.0
+  const parsedRoadWidth =
+    roadWidth !== null &&
+    roadWidth !== undefined &&
+    String(roadWidth).trim() !== '' &&
+    Number.isFinite(Number(roadWidth)) &&
+    Number(roadWidth) > 0
+      ? Number(roadWidth)
+      : null
+  const w = parsedRoadWidth
+  const halfW = w !== null ? w / 2.0 : null
 
   const features = []
   let totalLengthMeters = 0
-  let nominalAreaSqm = 0
-  let surfaceAreaSqm = 0
+  let nominalAreaSqm = null
+  let surfaceAreaSqm = null
+  let hasAuthentic3DElevation = false
 
   if (chosenLine) {
     const pts = chosenLine.coordinates
+    hasAuthentic3DElevation = pts.some(
+      (p) =>
+        Array.isArray(p) &&
+        p.length >= 3 &&
+        p[2] !== null &&
+        p[2] !== undefined &&
+        String(p[2]).trim() !== '' &&
+        Number.isFinite(Number(p[2]))
+    )
     // Compute planar length in UTM 48N (or VN-2000 if configured) for accurate metric length
     let metricPts = []
     if (checkVn.valid) {
@@ -1170,75 +1200,95 @@ export function buildStudioGeoJsonFromWgs84Import(
       )
     }
     totalLengthMeters = Number(totalLengthMeters.toFixed(2))
-    nominalAreaSqm = Number((totalLengthMeters * w).toFixed(2))
-    surfaceAreaSqm = nominalAreaSqm
 
-    // Build road surface corridor ribbon around the chosen LineString
-    const leftPts = []
-    const rightPts = []
-    for (let i = 0; i < pts.length; i++) {
-      let dx, dy
-      if (i === 0) {
-        dx = pts[1][0] - pts[0][0]
-        dy = pts[1][1] - pts[0][1]
-      } else if (i === pts.length - 1) {
-        dx = pts[i][0] - pts[i - 1][0]
-        dy = pts[i][1] - pts[i - 1][1]
-      } else {
-        dx = pts[i + 1][0] - pts[i - 1][0]
-        dy = pts[i + 1][1] - pts[i - 1][1]
+    if (w !== null && halfW !== null) {
+      nominalAreaSqm = Number((totalLengthMeters * w).toFixed(2))
+
+      // Build road surface corridor ribbon around the chosen LineString only when roadWidth is provided
+      const leftPts = []
+      const rightPts = []
+      for (let i = 0; i < pts.length; i++) {
+        let dx, dy
+        if (i === 0) {
+          dx = pts[1][0] - pts[0][0]
+          dy = pts[1][1] - pts[0][1]
+        } else if (i === pts.length - 1) {
+          dx = pts[i][0] - pts[i - 1][0]
+          dy = pts[i][1] - pts[i - 1][1]
+        } else {
+          dx = pts[i + 1][0] - pts[i - 1][0]
+          dy = pts[i + 1][1] - pts[i - 1][1]
+        }
+        const [lPt, rPt] = createTransverseLine(pts[i], dx, dy, halfW)
+        leftPts.push(lPt)
+        rightPts.push(rPt)
       }
-      const [lPt, rPt] = createTransverseLine(pts[i], dx, dy, halfW)
-      leftPts.push(lPt)
-      rightPts.push(rPt)
+      const surfaceRing = closePolygonRing([...leftPts, ...[...rightPts].reverse()])
+
+      // Compute planar polygon area in UTM/VN-2000 space using Shoelace formula
+      const ringMetric = surfaceRing.map((p) => {
+        if (checkVn.valid) {
+          const r = wgs84ToVn2000(p[0], p[1], crsConfig)
+          return [r.easting, r.northing]
+        }
+        const utmSrid = pts[0][0] >= 108.0 ? 32649 : 32648
+        const u = wgs84ToUtm(p[0], p[1], utmSrid)
+        return [u.x, u.y]
+      })
+      let shoelaceSum = 0
+      for (let i = 0; i < ringMetric.length - 1; i++) {
+        shoelaceSum +=
+          ringMetric[i][0] * ringMetric[i + 1][1] -
+          ringMetric[i + 1][0] * ringMetric[i][1]
+      }
+      surfaceAreaSqm = Number((Math.abs(shoelaceSum) / 2.0).toFixed(2))
+
+      // 1. RoadSurface Polygon
+      features.push({
+        type: 'Feature',
+        properties: {
+          name: `Mặt đường BTXM (${chosenLine.label})`,
+          type: 'RoadSurface',
+          layer: 'MAT_DUONG',
+          roadWidth: w,
+          surfaceAreaSqm,
+          nominalAreaSqm,
+          fillColor: '#475569',
+        },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [surfaceRing],
+        },
+      })
+
+      // 2. Left & Right RoadEdges
+      features.push({
+        type: 'Feature',
+        properties: {
+          name: 'Mép đường bên trái',
+          type: 'RoadEdge',
+          side: 'Left',
+          layer: 'MEP_DUONG',
+        },
+        geometry: {
+          type: 'LineString',
+          coordinates: leftPts,
+        },
+      })
+      features.push({
+        type: 'Feature',
+        properties: {
+          name: 'Mép đường bên phải',
+          type: 'RoadEdge',
+          side: 'Right',
+          layer: 'MEP_DUONG',
+        },
+        geometry: {
+          type: 'LineString',
+          coordinates: rightPts,
+        },
+      })
     }
-    const surfaceRing = closePolygonRing([...leftPts, ...[...rightPts].reverse()])
-
-    // 1. RoadSurface Polygon
-    features.push({
-      type: 'Feature',
-      properties: {
-        name: `Mặt đường BTXM (${chosenLine.label})`,
-        type: 'RoadSurface',
-        layer: 'MAT_DUONG',
-        roadWidth: w,
-        surfaceAreaSqm,
-        nominalAreaSqm,
-        fillColor: '#475569',
-      },
-      geometry: {
-        type: 'Polygon',
-        coordinates: [surfaceRing],
-      },
-    })
-
-    // 2. Left & Right RoadEdges
-    features.push({
-      type: 'Feature',
-      properties: {
-        name: 'Mép đường bên trái',
-        type: 'RoadEdge',
-        side: 'Left',
-        layer: 'MEP_DUONG',
-      },
-      geometry: {
-        type: 'LineString',
-        coordinates: leftPts,
-      },
-    })
-    features.push({
-      type: 'Feature',
-      properties: {
-        name: 'Mép đường bên phải',
-        type: 'RoadEdge',
-        side: 'Right',
-        layer: 'MEP_DUONG',
-      },
-      geometry: {
-        type: 'LineString',
-        coordinates: rightPts,
-      },
-    })
 
     // 3. Main Centerline
     const isSynthetic = Boolean(
@@ -1256,6 +1306,7 @@ export function buildStudioGeoJsonFromWgs84Import(
         roadName: chosenLine.roadName || chosenLine.label,
         type: 'Centerline',
         isMainCenterline: true,
+        hasAuthentic3DElevation,
         isSyntheticSample: isSynthetic,
         warning: isSynthetic
           ? 'DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA'
@@ -1326,6 +1377,7 @@ export function buildStudioGeoJsonFromWgs84Import(
     bbox,
     sourceDataKind: 'WGS84_IMPORT',
     hasCenterline: Boolean(chosenLine),
+    hasAuthentic3DElevation,
     selectedCenterlineId: chosenLine?.id || null,
     selectedCandidate: chosenLine,
     lineCandidates,
@@ -1343,8 +1395,9 @@ export function buildStudioGeoJsonFromWgs84Import(
       totalLengthMeters,
       nominalAreaSqm,
       surfaceAreaSqm,
-      totalAreaSqm: nominalAreaSqm,
+      totalAreaSqm: surfaceAreaSqm ?? nominalAreaSqm,
       roadWidth: w,
+      hasAuthentic3DElevation,
     },
     crsMetadata: {
       sourceDatum: 'WGS-84 (EPSG:4326)',
@@ -1619,10 +1672,14 @@ export function buildRoadGuardGeometryDraft({
   roadName = '',
   roadWidthMeters,
   roadWidth,
-  surveyWidthMeters = 7.0,
+  surveyWidthMeters = null,
 }) {
   const inputCoords = wgs84CenterlineCoords || centerlineWgs84
-  const effWidth = roadWidthMeters ?? roadWidth ?? 7.0
+  const rawWidth = roadWidthMeters ?? roadWidth
+  const effWidth =
+    rawWidth !== null && rawWidth !== undefined && String(rawWidth).trim() !== ''
+      ? Number(rawWidth)
+      : NaN
   const srid = Number(sourceCrs)
   if (!ALLOWED_ROADGUARD_UTM_SRIDS.includes(srid)) {
     return {

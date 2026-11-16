@@ -24,6 +24,7 @@ import {
 import toast from 'react-hot-toast'
 import { downloadExcelReport } from '../utils/excelExporter'
 import {
+  PAVEMENT_DESIGN_FIELD_SPECS,
   enrichGeoJsonWithEngineeringFeatures,
   normalizeRoadParams,
 } from '../utils/roadEngineeringBuilder'
@@ -122,7 +123,10 @@ export default function RightInspectorPanel({
   const isCoordsSource =
     sourceDataKind === 'coords' || effectiveGeoJson?.sourceDataKind === 'VN2000_COORDS'
   const isSurfaceAreaProvisional = Boolean(stats.isSurfaceAreaProvisional)
-  const analyzedRoadWidth = Number(stats.analyzedRoadWidth || normalizedParams.roadWidth)
+  const analyzedRoadWidth =
+    stats.analyzedRoadWidth != null && Number(stats.analyzedRoadWidth) > 0
+      ? Number(stats.analyzedRoadWidth)
+      : normalizedParams.roadWidth
 
   const getExportBlockedReason = (targetFormat = 'all') => {
     if (crsLifecycleState === 'ANALYZING') {
@@ -130,6 +134,9 @@ export default function RightInspectorPanel({
     }
     if (isSurfaceAreaProvisional) {
       return `Bề rộng mặt đường đã đổi từ ${analyzedRoadWidth}m sang ${normalizedParams.roadWidth}m. Hãy bấm Cập Nhật & Dựng Lại Mặt Đường trước khi xuất dữ liệu chính thức.`
+    }
+    if (normalizedParams.pavementDesign && !normalizedParams.pavementDesign.valid) {
+      return normalizedParams.pavementDesign.errors[0]
     }
     // If source data is native WGS-84, GeoJSON export does not require VN-2000 CRS
     if (isWgs84Source && targetFormat === 'geojson') {
@@ -367,12 +374,40 @@ export default function RightInspectorPanel({
   ])
 
   const totalLen = Number(stats.totalLengthMeters || 0)
-  const nominalArea = Number(stats.nominalAreaSqm || totalLen * normalizedParams.roadWidth)
-  const surfaceArea = Number(stats.surfaceAreaSqm || nominalArea)
-  const totalSlabs = Number(stats.estimatedConcreteSlabs || 0)
-  const longitudinalSlabs = Number(stats.longitudinalSlabs || 0)
-  const stationCount = Number(stats.stationCount || 0)
-  const roadSegCount = Number(stats.roadSegments || dynamicSegments.length || 0)
+  const roadWidthVal =
+    normalizedParams.roadWidth != null && normalizedParams.roadWidth > 0
+      ? normalizedParams.roadWidth
+      : stats.roadWidth != null && Number(stats.roadWidth) > 0
+      ? Number(stats.roadWidth)
+      : null
+  const nominalArea =
+    stats.nominalAreaSqm != null && Number.isFinite(Number(stats.nominalAreaSqm))
+      ? Number(stats.nominalAreaSqm)
+      : totalLen > 0 && roadWidthVal != null
+      ? Number((totalLen * roadWidthVal).toFixed(2))
+      : null
+  const surfaceArea =
+    stats.surfaceAreaSqm != null && Number.isFinite(Number(stats.surfaceAreaSqm))
+      ? Number(stats.surfaceAreaSqm)
+      : null
+  const totalSlabs =
+    stats.estimatedConcreteSlabs != null && Number.isFinite(Number(stats.estimatedConcreteSlabs))
+      ? Number(stats.estimatedConcreteSlabs)
+      : null
+  const longitudinalSlabs =
+    stats.longitudinalSlabs != null && Number.isFinite(Number(stats.longitudinalSlabs))
+      ? Number(stats.longitudinalSlabs)
+      : null
+  const stationCount =
+    stats.stationCount != null && Number.isFinite(Number(stats.stationCount))
+      ? Number(stats.stationCount)
+      : null
+  const roadSegCount =
+    stats.roadSegments != null && Number.isFinite(Number(stats.roadSegments))
+      ? Number(stats.roadSegments)
+      : dynamicSegments.length > 0
+      ? dynamicSegments.length
+      : null
   const completedCount = completedSegments.length
   const progressPct =
     dynamicSegments.length > 0
@@ -472,15 +507,90 @@ export default function RightInspectorPanel({
         {activeSubTab === 'metrics' && (
           <>
             {!hasGeometry ? (
-              <div className="p-5 rounded-md bg-[#0B1220]/60 border border-[#27384E] text-center space-y-2 my-3">
-                <Ruler className="w-5 h-5 text-[#8FA3BA] mx-auto" />
-                <h3 className="text-[13.5px] font-semibold text-[#E8EEF6]">
-                  Chưa có số liệu hình học tuyến
-                </h3>
-                <p className="text-[12.5px] text-[#A9B9CE] leading-relaxed">
-                  Nạp bản vẽ AutoCAD (<code className="font-mono">.dxf</code>) hoặc nhập tọa độ VN-2000 ở bảng cấu hình bên trái và bấm{' '}
-                  <span className="text-[#F06421] font-semibold">Phân Tích &amp; Dựng Tuyến</span>.
-                </p>
+              <div className="space-y-4 my-3">
+                <div className="p-5 rounded-md bg-[#0B1220]/60 border border-[#27384E] text-center space-y-2">
+                  <Ruler className="w-5 h-5 text-[#8FA3BA] mx-auto" />
+                  <h3 className="text-[13.5px] font-semibold text-[#E8EEF6]">
+                    Chưa có số liệu hình học tuyến
+                  </h3>
+                  <p className="text-[12.5px] text-[#A9B9CE] leading-relaxed">
+                    Nạp bản vẽ AutoCAD (<code className="font-mono">.dxf</code>) hoặc nhập tọa độ VN-2000 ở bảng cấu hình bên trái và bấm{' '}
+                    <span className="text-[#F06421] font-semibold">Phân Tích &amp; Dựng Tuyến</span>.
+                  </p>
+                </div>
+
+                {/* BTXM Design Dossier Parameters Table */}
+                <div
+                  data-testid="pavement-design-summary-card"
+                  className="p-3 rounded-md bg-[#17263C] border border-[#27384E] space-y-2 text-[12.5px]"
+                >
+                  <div className="flex items-center justify-between border-b border-[#27384E] pb-1.5">
+                    <span className="font-bold text-[#A9B9CE] uppercase tracking-wider text-[11.5px]">
+                      Thông số thiết kế BTXM
+                    </span>
+                    <span className="text-[10.5px] font-mono text-[#22B7C9]">
+                      {normalizedParams.pavementDesign?.dxfExtraction?.isDxf
+                        ? `DXF: ${normalizedParams.pavementDesign.dxfExtraction.extractedCount}/4 tự điền`
+                        : 'Hồ sơ thiết kế'}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-[#27384E]/60">
+                    {PAVEMENT_DESIGN_FIELD_SPECS.map((spec) => {
+                      const fState = normalizedParams.pavementDesign?.fields?.[spec.key]
+                      const dxfEvidence = fState?.dxfEvidence || null
+                      const isProvided = Boolean(fState?.isProvided && fState?.valid)
+                      const isInvalid = Boolean(fState && !fState.valid)
+                      return (
+                        <div
+                          key={spec.key}
+                          data-param-row={spec.key}
+                          className="py-1.5 space-y-0.5"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[#C0CEDF]">{spec.label}:</span>
+                            <span
+                              data-param-value={spec.key}
+                              className={`font-mono font-semibold tabular-nums text-right ${
+                                isInvalid
+                                  ? 'text-[#EF4444]'
+                                  : isProvided
+                                  ? 'text-[#E8EEF6]'
+                                  : 'text-[#8FA3BA] italic font-normal'
+                              }`}
+                            >
+                              {isInvalid
+                                ? fState.displayValue
+                                : isProvided
+                                ? `${fState.value} ${spec.unit}`
+                                : 'Chưa có dữ liệu'}
+                            </span>
+                          </div>
+                          {dxfEvidence && (
+                            <div
+                              data-param-evidence={spec.key}
+                              className="text-[10.5px] font-mono text-[#8FA3BA] leading-snug"
+                            >
+                              <span
+                                className={
+                                  fState?.provenance === 'AUTO_FILLED_FROM_DXF'
+                                    ? 'text-[#4ADE80] font-semibold'
+                                    : dxfEvidence.status === 'MULTIPLE_VALUES' ||
+                                      dxfEvidence.status === 'MISSING_UNIT' ||
+                                      dxfEvidence.status === 'AMBIGUOUS_DIMLFAC'
+                                    ? 'text-[#FBBF24] font-semibold'
+                                    : 'text-[#94A3B8]'
+                                }
+                              >
+                                [{fState?.provenanceLabel}]
+                              </span>{' '}
+                              <span>{dxfEvidence.summaryText}</span>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
               </div>
             ) : (
               <>
@@ -552,13 +662,31 @@ export default function RightInspectorPanel({
                       <div className="text-[12.5px] text-[#C0CEDF] font-medium">
                         Bề rộng mặt (B)
                       </div>
-                      <div className="mt-1 text-[17px] font-bold font-mono tabular-nums text-[#E8EEF6]">
-                        {normalizedParams.roadWidth.toFixed(2)}{' '}
-                        <span className="text-[12.5px] font-normal text-[#F06421]">m</span>
-                      </div>
-                      <div className="mt-0.5 text-[12px] text-[#8FA3BA] tabular-nums">
-                        {normalizedParams.laneCount} dải × {normalizedParams.slabWidth.toFixed(2)}m
-                      </div>
+                      {roadWidthVal != null ? (
+                        <>
+                          <div className="mt-1 text-[17px] font-bold font-mono tabular-nums text-[#E8EEF6]">
+                            {roadWidthVal.toFixed(2)}{' '}
+                            <span className="text-[12.5px] font-normal text-[#F06421]">m</span>
+                          </div>
+                          <div className="mt-0.5 text-[12px] text-[#8FA3BA] tabular-nums">
+                            {normalizedParams.laneCount != null && normalizedParams.slabWidth != null
+                              ? `${normalizedParams.laneCount} dải × ${normalizedParams.slabWidth.toFixed(2)}m`
+                              : 'Chưa có dữ liệu số dải'}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div
+                            data-testid="metric-road-width-empty"
+                            className="mt-1 text-[13.5px] font-mono italic text-[#8FA3BA]"
+                          >
+                            Chưa có dữ liệu
+                          </div>
+                          <div className="mt-0.5 text-[11.5px] text-[#7E92AA]">
+                            Chưa xác nhận bề rộng B
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
 
@@ -567,49 +695,77 @@ export default function RightInspectorPanel({
                     <div className="flex items-center justify-between border-b border-[#27384E] pb-2">
                       <div>
                         <div className="text-[12.5px] text-[#C0CEDF] font-medium">
-                          Diện tích danh định (L × B)
+                          Diện tích danh nghĩa (L × B)
                         </div>
                         <div className="text-[12px] text-[#8FA3BA] tabular-nums">
-                          {totalLen.toFixed(2)}m × {normalizedParams.roadWidth.toFixed(2)}m
+                          {nominalArea != null && roadWidthVal != null
+                            ? `${totalLen.toFixed(2)}m × ${roadWidthVal.toFixed(2)}m`
+                            : 'Cần chiều dài L và bề rộng B'}
                         </div>
                       </div>
-                      <div className="text-[15px] font-bold font-mono tabular-nums text-[#E8EEF6]">
-                        {nominalArea.toLocaleString('vi-VN', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}{' '}
-                        <span className="text-[12px] font-normal text-[#A9B9CE]">m²</span>
-                      </div>
+                      {nominalArea != null ? (
+                        <div
+                          data-testid="metric-nominal-area-value"
+                          className="text-[15px] font-bold font-mono tabular-nums text-[#E8EEF6]"
+                        >
+                          {nominalArea.toLocaleString('vi-VN', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}{' '}
+                          <span className="text-[12px] font-normal text-[#A9B9CE]">m²</span>
+                        </div>
+                      ) : (
+                        <div
+                          data-testid="metric-nominal-area-empty"
+                          className="text-[13px] font-mono italic text-[#8FA3BA]"
+                        >
+                          Chưa có dữ liệu
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between pt-0.5">
                       <div>
                         <div className="text-[12.5px] text-[#E8EEF6] font-semibold">
-                          Diện tích đa giác phẳng
+                          Diện tích hình học (Polygon)
                         </div>
                         <div className="text-[12px] mt-0.5">
-                          {isSurfaceAreaProvisional ? (
+                          {surfaceArea == null ? (
+                            <span className="text-[#8FA3BA]">
+                              Chưa có đa giác mặt đường
+                            </span>
+                          ) : isSurfaceAreaProvisional ? (
                             <span className="text-[#F59E0B] font-medium">
                               Tạm tính (Chưa dựng lại B)
                             </span>
                           ) : (
                             <span className="text-[#39B58A] font-medium">
-                              Chính thức (Polygon CAD)
+                              Tính từ đa giác (Polygon)
                             </span>
                           )}
                         </div>
                       </div>
-                      <div
-                        className={`text-[15px] font-bold font-mono tabular-nums ${
-                          isSurfaceAreaProvisional ? 'text-[#F59E0B]' : 'text-[#39B58A]'
-                        }`}
-                      >
-                        {surfaceArea.toLocaleString('vi-VN', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}{' '}
-                        <span className="text-[12px] font-normal">m²</span>
-                      </div>
+                      {surfaceArea != null ? (
+                        <div
+                          data-testid="metric-surface-area-value"
+                          className={`text-[15px] font-bold font-mono tabular-nums ${
+                            isSurfaceAreaProvisional ? 'text-[#F59E0B]' : 'text-[#39B58A]'
+                          }`}
+                        >
+                          {surfaceArea.toLocaleString('vi-VN', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}{' '}
+                          <span className="text-[12px] font-normal">m²</span>
+                        </div>
+                      ) : (
+                        <div
+                          data-testid="metric-surface-area-empty"
+                          className="text-[13px] font-mono italic text-[#8FA3BA]"
+                        >
+                          Chưa có dữ liệu
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -619,27 +775,132 @@ export default function RightInspectorPanel({
                       <div className="text-[12.5px] text-[#C0CEDF] font-medium">
                         Tổng tấm BTXM
                       </div>
-                      <div className="mt-1 text-[16px] font-bold font-mono tabular-nums text-[#E8EEF6]">
-                        {totalSlabs.toLocaleString('vi-VN')}{' '}
-                        <span className="text-[12px] font-normal text-[#A9B9CE]">tấm</span>
-                      </div>
-                      <div className="mt-0.5 text-[12px] text-[#8FA3BA] tabular-nums">
-                        {longitudinalSlabs} hàng × {normalizedParams.laneCount} dải ({normalizedParams.slabLength}m)
-                      </div>
+                      {totalSlabs != null ? (
+                        <>
+                          <div className="mt-1 text-[16px] font-bold font-mono tabular-nums text-[#E8EEF6]">
+                            {totalSlabs.toLocaleString('vi-VN')}{' '}
+                            <span className="text-[12px] font-normal text-[#A9B9CE]">tấm</span>
+                          </div>
+                          <div className="mt-0.5 text-[12px] text-[#8FA3BA] tabular-nums">
+                            {longitudinalSlabs} hàng × {normalizedParams.laneCount} dải ({normalizedParams.effectiveSlabLength || normalizedParams.slabLength}m)
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div
+                            data-testid="metric-slabs-empty"
+                            className="mt-1 text-[13.5px] font-mono italic text-[#8FA3BA]"
+                          >
+                            Chưa có dữ liệu
+                          </div>
+                          <div className="mt-0.5 text-[11.5px] text-[#7E92AA]">
+                            Cần B, số dải &amp; chiều dài tấm
+                          </div>
+                        </>
+                      )}
                     </div>
 
                     <div className="p-3 rounded-md bg-[#17263C] border border-[#27384E]">
                       <div className="text-[12.5px] text-[#C0CEDF] font-medium">
                         Cọc &amp; Phân đoạn
                       </div>
-                      <div className="mt-1 text-[16px] font-bold font-mono tabular-nums text-[#E8EEF6]">
-                        {stationCount} <span className="text-[12px] font-normal text-[#A9B9CE]">cọc</span>{' '}
-                        / {roadSegCount} <span className="text-[12px] font-normal text-[#A9B9CE]">đoạn</span>
-                      </div>
-                      <div className="mt-0.5 text-[12px] text-[#8FA3BA] tabular-nums">
-                        Bước cọc L = {normalizedParams.segmentLength}m
-                      </div>
+                      {stationCount != null && roadSegCount != null ? (
+                        <>
+                          <div className="mt-1 text-[16px] font-bold font-mono tabular-nums text-[#E8EEF6]">
+                            {stationCount} <span className="text-[12px] font-normal text-[#A9B9CE]">cọc</span>{' '}
+                            / {roadSegCount} <span className="text-[12px] font-normal text-[#A9B9CE]">đoạn</span>
+                          </div>
+                          <div className="mt-0.5 text-[12px] text-[#8FA3BA] tabular-nums">
+                            Bước cọc L = {normalizedParams.segmentLength}m
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div
+                            data-testid="metric-stations-empty"
+                            className="mt-1 text-[13.5px] font-mono italic text-[#8FA3BA]"
+                          >
+                            Chưa có dữ liệu
+                          </div>
+                          <div className="mt-0.5 text-[11.5px] text-[#7E92AA]">
+                            Chưa có dữ liệu bước cọc
+                          </div>
+                        </>
+                      )}
                     </div>
+                  </div>
+                </div>
+
+                {/* BTXM Design Dossier Parameters Table */}
+                <div
+                  data-testid="pavement-design-summary-card"
+                  className="p-3 rounded-md bg-[#17263C] border border-[#27384E] space-y-2 text-[12.5px]"
+                >
+                  <div className="flex items-center justify-between border-b border-[#27384E] pb-1.5">
+                    <span className="font-bold text-[#A9B9CE] uppercase tracking-wider text-[11.5px]">
+                      Thông số thiết kế BTXM
+                    </span>
+                    <span className="text-[10.5px] font-mono text-[#22B7C9]">
+                      {normalizedParams.pavementDesign?.dxfExtraction?.isDxf
+                        ? `DXF: ${normalizedParams.pavementDesign.dxfExtraction.extractedCount}/4 tự điền`
+                        : 'Hồ sơ thiết kế'}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-[#27384E]/60">
+                    {PAVEMENT_DESIGN_FIELD_SPECS.map((spec) => {
+                      const fState = normalizedParams.pavementDesign?.fields?.[spec.key]
+                      const dxfEvidence = fState?.dxfEvidence || null
+                      const isProvided = Boolean(fState?.isProvided && fState?.valid)
+                      const isInvalid = Boolean(fState && !fState.valid)
+                      return (
+                        <div
+                          key={spec.key}
+                          data-param-row={spec.key}
+                          className="py-1.5 space-y-0.5"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[#C0CEDF]">{spec.label}:</span>
+                            <span
+                              data-param-value={spec.key}
+                              className={`font-mono font-semibold tabular-nums text-right ${
+                                isInvalid
+                                  ? 'text-[#EF4444]'
+                                  : isProvided
+                                  ? 'text-[#E8EEF6]'
+                                  : 'text-[#8FA3BA] italic font-normal'
+                              }`}
+                            >
+                              {isInvalid
+                                ? fState.displayValue
+                                : isProvided
+                                ? `${fState.value} ${spec.unit}`
+                                : 'Chưa có dữ liệu'}
+                            </span>
+                          </div>
+                          {dxfEvidence && (
+                            <div
+                              data-param-evidence={spec.key}
+                              className="text-[10.5px] font-mono text-[#8FA3BA] leading-snug"
+                            >
+                              <span
+                                className={
+                                  fState?.provenance === 'AUTO_FILLED_FROM_DXF'
+                                    ? 'text-[#4ADE80] font-semibold'
+                                    : dxfEvidence.status === 'MULTIPLE_VALUES' ||
+                                      dxfEvidence.status === 'MISSING_UNIT' ||
+                                      dxfEvidence.status === 'AMBIGUOUS_DIMLFAC'
+                                    ? 'text-[#FBBF24] font-semibold'
+                                    : 'text-[#94A3B8]'
+                                }
+                              >
+                                [{fState?.provenanceLabel}]
+                              </span>{' '}
+                              <span>{dxfEvidence.summaryText}</span>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
 
@@ -695,10 +956,17 @@ export default function RightInspectorPanel({
                   )}
                   <div className="flex justify-between items-center py-1">
                     <span className="text-[#8FA3BA]">Dữ liệu cao độ Z:</span>
-                    <span className="text-[#E8EEF6] font-medium">
+                    <span
+                      data-testid="metric-z-elevation-status"
+                      className={
+                        stats.hasAuthentic3DElevation
+                          ? 'text-[#E8EEF6] font-medium'
+                          : 'text-[#8FA3BA] italic font-mono'
+                      }
+                    >
                       {stats.hasAuthentic3DElevation
-                        ? 'Cao độ 3D từ CAD'
-                        : 'Bản vẽ 2D (Z giả định TCVN)'}
+                        ? 'Cao độ 3D từ bản vẽ / tọa độ'
+                        : 'Chưa có dữ liệu'}
                     </span>
                   </div>
                 </div>
@@ -780,13 +1048,19 @@ export default function RightInspectorPanel({
                   {
                     key: 'surface',
                     label: 'Dải mặt đường (RoadSurface)',
-                    desc: `Đa giác mặt đường B = ${normalizedParams.roadWidth}m`,
+                    desc:
+                      roadWidthVal != null
+                        ? `Đa giác mặt đường B = ${roadWidthVal}m`
+                        : 'Chưa có dữ liệu bề rộng B',
                     color: '#38BDF8',
                   },
                   {
                     key: 'slabs',
                     label: 'Tấm BTXM & Khe co giãn',
-                    desc: `Chia tấm L = ${normalizedParams.slabLength}m × ${normalizedParams.laneCount} dải`,
+                    desc:
+                      normalizedParams.effectiveSlabLength && normalizedParams.laneCount
+                        ? `Chia tấm L = ${normalizedParams.effectiveSlabLength}m × ${normalizedParams.laneCount} dải`
+                        : 'Chưa có dữ liệu chia tấm',
                     color: '#F59E0B',
                   },
                   {
@@ -810,7 +1084,10 @@ export default function RightInspectorPanel({
                   {
                     key: 'stations',
                     label: 'Cọc lý trình (Km0+000...)',
-                    desc: `Bước cọc tiêu chuẩn ${normalizedParams.segmentLength}m`,
+                    desc:
+                      normalizedParams.segmentLength != null
+                        ? `Bước cọc tiêu chuẩn ${normalizedParams.segmentLength}m`
+                        : 'Chưa có dữ liệu bước cọc',
                     color: '#39B58A',
                   },
                   {

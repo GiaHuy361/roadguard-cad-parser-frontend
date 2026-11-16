@@ -23,48 +23,20 @@ import CandidateLayerSelect from './CandidateLayerSelect'
 import {
   DEFAULT_VN2000_PRESET_ID,
   VN2000_SURVEY_PRIORITY_GUIDANCE,
+  PAVEMENT_DESIGN_FIELD_SPECS,
   resolveVn2000Preset,
   convertRoadResponseToGeoJson,
   enrichGeoJsonWithEngineeringFeatures,
   normalizeRoadParams,
   buildAnalyticsFromRoadResponse,
   shouldFallbackToParseDxf,
+  extractBtxmDesignParamsFromDxfText,
 } from '../utils/roadEngineeringBuilder'
 import {
   parseWgs84CoordinateText,
   parseAndValidateWgs84GeoJson,
   buildStudioGeoJsonFromWgs84Import,
 } from '../utils/crsTransformEngine'
-
-const SAMPLE_WGS84_GEOJSON = JSON.stringify(
-  {
-    type: 'FeatureCollection',
-    isSyntheticSample: true,
-    warning: 'DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA',
-    features: [
-      {
-        type: 'Feature',
-        properties: {
-          roadCode: 'GEO-GJ-20261025-01',
-          roadName: 'Đường mẫu kiểm thử GeoJSON (Minh họa)',
-          isSyntheticSample: true,
-          warning: 'DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA',
-          note: 'DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA (Tuyến 3 điểm chữ L 204.03m phục vụ kiểm thử tính toán CRS, GeoJSON, dựng hình học và xuất JSON)',
-        },
-        geometry: {
-          type: 'LineString',
-          coordinates: [
-            [106.660172, 10.762622],
-            [106.6612, 10.762622],
-            [106.6612, 10.76345],
-          ],
-        },
-      },
-    ],
-  },
-  null,
-  2
-)
 
 export default function Sidebar({
   onDataLoaded,
@@ -99,6 +71,8 @@ export default function Sidebar({
   const [axisAmbiguityAlert, setAxisAmbiguityAlert] = useState(null)
   const activeRequestIdRef = useRef(0)
   const abortControllerRef = useRef(null)
+  const btxmScanSeqRef = useRef(0)
+  const dirtyFieldsForCurrentScanRef = useRef(new Set())
   const [wgs84SubMode, setWgs84SubMode] = useState('geojson') // 'geojson' | 'coords'
   const [wgs84Text, setWgs84Text] = useState('')
   const [wgs84FileName, setWgs84FileName] = useState('')
@@ -113,10 +87,15 @@ export default function Sidebar({
     }
   }, [cadFile, file])
 
-  const segmentLength = roadParams?.segmentLength ?? '100'
-  const roadWidth = roadParams?.roadWidth ?? '7.0'
-  const slabLength = roadParams?.slabLength ?? '4.0'
-  const laneCount = roadParams?.laneCount ?? '2'
+  const segmentLength = roadParams?.segmentLength ?? ''
+  const roadWidth = roadParams?.roadWidth ?? ''
+  const slabLength = roadParams?.slabLength ?? ''
+  const laneCount = roadParams?.laneCount ?? ''
+  const slabThicknessCentimeters = roadParams?.slabThicknessCentimeters ?? ''
+  const contractionJointSpacingMeters = roadParams?.contractionJointSpacingMeters ?? ''
+  const expansionJointSpacingMeters = roadParams?.expansionJointSpacingMeters ?? ''
+  const expansionJointGapMillimeters = roadParams?.expansionJointGapMillimeters ?? ''
+  const dxfBtxmExtraction = roadParams?.dxfBtxmExtraction ?? null
 
   // VN-2000 Geodetic CRS state (supports reference presets + custom CM + 3°/6° zone + explicit axis order)
   const [selectedPresetId, setSelectedPresetId] = useState(DEFAULT_VN2000_PRESET_ID)
@@ -218,13 +197,125 @@ export default function Sidebar({
   }
 
   const updateParam = (key, val) => {
+    if (
+      key === 'slabThicknessCentimeters' ||
+      key === 'contractionJointSpacingMeters' ||
+      key === 'expansionJointSpacingMeters' ||
+      key === 'expansionJointGapMillimeters'
+    ) {
+      dirtyFieldsForCurrentScanRef.current.add(key)
+    }
     if (setRoadParams) {
       setRoadParams((prev) => ({ ...prev, [key]: val }))
     }
   }
 
+  const scanCadFileForBtxmParams = useCallback(
+    async (selectedFile) => {
+      const scanId = ++btxmScanSeqRef.current
+      dirtyFieldsForCurrentScanRef.current = new Set()
+      if (!setRoadParams) return
+
+      // Immediately clear previous file's BTXM values and evidence so switching DXFs never retains stale values
+      setRoadParams((prev) => ({
+        ...prev,
+        slabThicknessCentimeters: '',
+        contractionJointSpacingMeters: '',
+        expansionJointSpacingMeters: '',
+        expansionJointGapMillimeters: '',
+        dxfBtxmExtraction: null,
+      }))
+
+      if (!selectedFile) return
+
+      const lowerName = String(selectedFile.name || '').toLowerCase()
+      if (!lowerName.endsWith('.dxf')) {
+        setRoadParams((prev) => ({
+          ...prev,
+          slabThicknessCentimeters: '',
+          contractionJointSpacingMeters: '',
+          expansionJointSpacingMeters: '',
+          expansionJointGapMillimeters: '',
+          dxfBtxmExtraction: {
+            fileName: selectedFile.name,
+            isDxf: false,
+            extractedCount: 0,
+            ambiguousCount: 0,
+            missingCount: 4,
+            fields: {},
+            autoFilledInputs: {
+              slabThicknessCentimeters: '',
+              contractionJointSpacingMeters: '',
+              expansionJointSpacingMeters: '',
+              expansionJointGapMillimeters: '',
+            },
+          },
+        }))
+        return
+      }
+
+      try {
+        const dxfText = await selectedFile.text()
+        if (
+          typeof window !== 'undefined' &&
+          Number(window.__RG_TEST_SCAN_DELAY_MS) > 0
+        ) {
+          await new Promise((r) =>
+            setTimeout(r, Number(window.__RG_TEST_SCAN_DELAY_MS))
+          )
+        }
+        if (btxmScanSeqRef.current !== scanId) return
+        const extraction = extractBtxmDesignParamsFromDxfText(
+          dxfText,
+          selectedFile.name
+        )
+        if (btxmScanSeqRef.current !== scanId) return
+
+        const dirtySet = new Set(dirtyFieldsForCurrentScanRef.current)
+        setRoadParams((prev) => ({
+          ...prev,
+          slabThicknessCentimeters: dirtySet.has('slabThicknessCentimeters')
+            ? prev.slabThicknessCentimeters
+            : extraction.autoFilledInputs.slabThicknessCentimeters ?? '',
+          contractionJointSpacingMeters: dirtySet.has('contractionJointSpacingMeters')
+            ? prev.contractionJointSpacingMeters
+            : extraction.autoFilledInputs.contractionJointSpacingMeters ?? '',
+          expansionJointSpacingMeters: dirtySet.has('expansionJointSpacingMeters')
+            ? prev.expansionJointSpacingMeters
+            : extraction.autoFilledInputs.expansionJointSpacingMeters ?? '',
+          expansionJointGapMillimeters: dirtySet.has('expansionJointGapMillimeters')
+            ? prev.expansionJointGapMillimeters
+            : extraction.autoFilledInputs.expansionJointGapMillimeters ?? '',
+          dxfBtxmExtraction: extraction,
+        }))
+      } catch {
+        if (btxmScanSeqRef.current !== scanId) return
+        const dirtySet = new Set(dirtyFieldsForCurrentScanRef.current)
+        setRoadParams((prev) => ({
+          ...prev,
+          slabThicknessCentimeters: dirtySet.has('slabThicknessCentimeters')
+            ? prev.slabThicknessCentimeters
+            : '',
+          contractionJointSpacingMeters: dirtySet.has('contractionJointSpacingMeters')
+            ? prev.contractionJointSpacingMeters
+            : '',
+          expansionJointSpacingMeters: dirtySet.has('expansionJointSpacingMeters')
+            ? prev.expansionJointSpacingMeters
+            : '',
+          expansionJointGapMillimeters: dirtySet.has('expansionJointGapMillimeters')
+            ? prev.expansionJointGapMillimeters
+            : '',
+          dxfBtxmExtraction: null,
+        }))
+      }
+    },
+    [setRoadParams]
+  )
+
   const handleRemoveFile = () => {
     abortActiveRequest()
+    btxmScanSeqRef.current++
+    dirtyFieldsForCurrentScanRef.current = new Set()
     setLoading(false)
     setFile(null)
     setVisibleLayers({})
@@ -238,6 +329,16 @@ export default function Sidebar({
     if (onCustomFeaturesChange) onCustomFeaturesChange([])
     if (fileInputRef.current) fileInputRef.current.value = ''
     if (onCadFileChange) onCadFileChange(null)
+    if (setRoadParams) {
+      setRoadParams((prev) => ({
+        ...prev,
+        slabThicknessCentimeters: '',
+        contractionJointSpacingMeters: '',
+        expansionJointSpacingMeters: '',
+        expansionJointGapMillimeters: '',
+        dxfBtxmExtraction: null,
+      }))
+    }
   }
 
   const handleDragOver = useCallback((e) => {
@@ -260,11 +361,12 @@ export default function Sidebar({
         setAppliedCrsConfig(null)
         if (onAppliedCrsConfigChange) onAppliedCrsConfigChange(null)
         if (onCadFileChange) onCadFileChange(dropped)
+        scanCadFileForBtxmParams(dropped)
       } else {
         toast.error('Chỉ hỗ trợ file CAD (.dxf, .dwg).')
       }
     },
-    [onCadFileChange, abortActiveRequest]
+    [onCadFileChange, abortActiveRequest, onAppliedCrsConfigChange, scanCadFileForBtxmParams]
   )
 
   const handleFileChange = (e) => {
@@ -278,6 +380,7 @@ export default function Sidebar({
       setAppliedCrsConfig(null)
       if (onAppliedCrsConfigChange) onAppliedCrsConfigChange(null)
       if (onCadFileChange) onCadFileChange(selected)
+      scanCadFileForBtxmParams(selected)
     }
   }
 
@@ -296,7 +399,16 @@ export default function Sidebar({
         roadWidth,
         slabLength,
         laneCount,
+        slabThicknessCentimeters,
+        contractionJointSpacingMeters,
+        expansionJointSpacingMeters,
+        expansionJointGapMillimeters,
+        dxfBtxmExtraction,
       })
+      if (normParams.pavementDesign && !normParams.pavementDesign.valid) {
+        toast.error(normParams.pavementDesign.errors[0])
+        return
+      }
       const exactRoadWidth = normParams.roadWidth
       if (selectedPresetId === 'unconfigured' || !selectedCm || isNaN(parseFloat(selectedCm))) {
         toast.error('Vui lòng chọn hệ quy chiếu VN-2000 hoặc kinh tuyến trục L₀ trước khi phân tích.')
@@ -330,7 +442,7 @@ export default function Sidebar({
       try {
         const roadFd = new FormData()
         roadFd.append('File', file)
-        roadFd.append('RoadWidth', exactRoadWidth.toString())
+        roadFd.append('RoadWidth', exactRoadWidth != null ? exactRoadWidth.toString() : '0')
         roadFd.append('CentralMeridian', cmVal.toString())
         roadFd.append('ScaleFactor', k0Val.toString())
         roadFd.append('AxisOrder', axisOrder)
@@ -453,9 +565,15 @@ export default function Sidebar({
             parseFd.append('centralMeridian', cmVal.toString())
             parseFd.append('scaleFactor', k0Val.toString())
             parseFd.append('axisOrder', axisOrder)
-            parseFd.append('SegmentLength', normParams.segmentLength.toString())
-            parseFd.append('RoadWidth', exactRoadWidth.toString())
-            parseFd.append('SlabLength', normParams.slabLength.toString())
+            if (normParams.segmentLength != null) {
+              parseFd.append('SegmentLength', normParams.segmentLength.toString())
+            }
+            if (exactRoadWidth != null) {
+              parseFd.append('RoadWidth', exactRoadWidth.toString())
+            }
+            if (normParams.effectiveSlabLength != null) {
+              parseFd.append('SlabLength', normParams.effectiveSlabLength.toString())
+            }
             if (targetLayer) {
               parseFd.append('centerlineLayerName', targetLayer)
             }
@@ -483,7 +601,14 @@ export default function Sidebar({
               const analytics = pData?.analytics ?? null
               const featureCollection = pData?.featureCollection ?? pData
               if (analytics && onAnalyticsLoaded) {
-                onAnalyticsLoaded(analytics)
+                onAnalyticsLoaded({
+                  ...analytics,
+                  slabThicknessCentimeters: normParams.slabThicknessCentimeters,
+                  contractionJointSpacingMeters: normParams.contractionJointSpacingMeters,
+                  expansionJointSpacingMeters: normParams.expansionJointSpacingMeters,
+                  expansionJointGapMillimeters: normParams.expansionJointGapMillimeters,
+                  pavementDesign: normParams.pavementDesign,
+                })
               }
               if (featureCollection && onDataLoaded) {
                 onDataLoaded(featureCollection)
@@ -545,6 +670,11 @@ export default function Sidebar({
       roadWidth,
       slabLength,
       laneCount,
+      slabThicknessCentimeters,
+      contractionJointSpacingMeters,
+      expansionJointSpacingMeters,
+      expansionJointGapMillimeters,
+      dxfBtxmExtraction,
       selectedPresetId,
       selectedCm,
       scaleFactor,
@@ -576,7 +706,16 @@ export default function Sidebar({
         roadWidth,
         slabLength,
         laneCount,
+        slabThicknessCentimeters,
+        contractionJointSpacingMeters,
+        expansionJointSpacingMeters,
+        expansionJointGapMillimeters,
+        dxfBtxmExtraction,
       })
+      if (normParams.pavementDesign && !normParams.pavementDesign.valid) {
+        toast.error(normParams.pavementDesign.errors[0])
+        return
+      }
       const exactRoadWidth = normParams.roadWidth
       if (selectedPresetId === 'unconfigured' || !selectedCm || isNaN(parseFloat(selectedCm))) {
         toast.error('Vui lòng chọn hệ quy chiếu VN-2000 hoặc kinh tuyến trục L₀ trước khi phân tích.')
@@ -606,7 +745,7 @@ export default function Sidebar({
       try {
         const res = await axios.post(`${API_BASE}/api/cad/parse-coords`, {
           coordinates: coordsText,
-          roadWidth: exactRoadWidth,
+          roadWidth: exactRoadWidth != null ? exactRoadWidth : 0,
           centralMeridian: cmVal,
           scaleFactor: k0Val,
           axisOrder: effectiveAxisOrder,
@@ -633,18 +772,9 @@ export default function Sidebar({
         if (geojson && onDataLoaded) onDataLoaded(geojson)
 
         if (onAnalyticsLoaded) {
-          const len = roadData.totalLengthMeters || 0
-          const nominalArea = Number((len * exactRoadWidth).toFixed(2))
-          onAnalyticsLoaded({
-            totalLengthMeters: len,
-            nominalAreaSqm: nominalArea,
-            surfaceAreaSqm: roadData.surfaceAreaSqm ?? nominalArea,
-            totalAreaSqm: nominalArea,
-            roadSegments: Math.ceil(len / normParams.segmentLength),
-            longitudinalSlabs: Math.floor(len / normParams.slabLength),
-            estimatedConcreteSlabs:
-              Math.floor(len / normParams.slabLength) * normParams.laneCount,
-          })
+          onAnalyticsLoaded(
+            buildAnalyticsFromRoadResponse(roadData, normParams, geojson)
+          )
         }
         toast.success(
           `Đã dựng tuyến ${roadData.totalLengthMeters} m từ ${roadData.centerline?.length ?? 0} điểm tọa độ`,
@@ -681,6 +811,11 @@ export default function Sidebar({
       roadWidth,
       slabLength,
       laneCount,
+      slabThicknessCentimeters,
+      contractionJointSpacingMeters,
+      expansionJointSpacingMeters,
+      expansionJointGapMillimeters,
+      dxfBtxmExtraction,
       selectedPresetId,
       selectedCm,
       scaleFactor,
@@ -746,7 +881,16 @@ export default function Sidebar({
         roadWidth,
         slabLength,
         laneCount,
+        slabThicknessCentimeters,
+        contractionJointSpacingMeters,
+        expansionJointSpacingMeters,
+        expansionJointGapMillimeters,
+        dxfBtxmExtraction,
       })
+      if (normParams.pavementDesign && !normParams.pavementDesign.valid) {
+        toast.error(normParams.pavementDesign.errors[0])
+        return
+      }
       const crsConfigured =
         selectedPresetId !== 'unconfigured' &&
         Boolean(selectedCm) &&
@@ -809,6 +953,11 @@ export default function Sidebar({
       roadWidth,
       slabLength,
       laneCount,
+      slabThicknessCentimeters,
+      contractionJointSpacingMeters,
+      expansionJointSpacingMeters,
+      expansionJointGapMillimeters,
+      dxfBtxmExtraction,
       selectedPresetId,
       selectedCm,
       scaleFactor,
@@ -972,9 +1121,7 @@ export default function Sidebar({
     [roadParams]
   )
   const isSurfaceAreaProvisional = Boolean(ssotMetrics?.isSurfaceAreaProvisional)
-  const analyzedRoadWidth = Number(
-    ssotMetrics?.analyzedRoadWidth || normalizedParams.roadWidth
-  )
+  const analyzedRoadWidth = ssotMetrics?.analyzedRoadWidth ?? null
 
   // Sync bridge state up to App.jsx so RightInspectorPanel has full access
   useEffect(() => {
@@ -1194,18 +1341,7 @@ export default function Sidebar({
                 className="w-full p-2.5 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#22B7C9] focus:outline-none text-[13px] font-mono tabular-nums text-[#E8EEF6] placeholder-[#7E92AA]/70 resize-y leading-relaxed select-text"
               />
               <div className="flex items-center justify-between gap-2 text-[12px] text-[#8FA3BA]">
-                <span>Phân tách bằng dấu phẩy, tab hoặc khoảng trắng.</span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCoordsText(
-                      '1203568.50, 597842.10\n1203615.20, 597890.40\n1203680.00, 597955.80\n1203745.60, 598012.30'
-                    )
-                  }
-                  className="text-[#22B7C9] hover:underline font-medium shrink-0 cursor-pointer"
-                >
-                  Điền mẫu thử
-                </button>
+                <span>Phân tách bằng dấu phẩy, tab hoặc khoảng trắng (hỗ trợ X Y hoặc X Y Z).</span>
               </div>
             </div>
           ) : null}
@@ -1260,16 +1396,6 @@ export default function Sidebar({
                           : 'Chọn tệp .geojson / .json'}
                       </span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setWgs84FileName('GEO-GJ-20261025-01.geojson')
-                        setWgs84Text(SAMPLE_WGS84_GEOJSON)
-                      }}
-                      className="text-[12px] text-[#39B58A] hover:underline font-semibold cursor-pointer"
-                    >
-                      Điền mẫu chuẩn
-                    </button>
                   </div>
                   <textarea
                     rows={4}
@@ -1278,17 +1404,6 @@ export default function Sidebar({
                     placeholder='Dán nội dung GeoJSON (FeatureCollection / Feature / LineString chuẩn WGS-84 [lon, lat])...'
                     className="w-full p-2.5 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#39B58A] focus:outline-none text-[12px] font-mono text-[#E8EEF6] resize-y select-text"
                   />
-                  {wgs84ImportInspection?.isSyntheticSample && (
-                    <div className="p-2.5 rounded-md bg-[#F59E0B]/15 border border-[#F59E0B]/60 text-[#F59E0B] text-[11.5px] space-y-1">
-                      <div className="font-bold flex items-center gap-1.5">
-                        <AlertTriangle className="w-4 h-4 flex-shrink-0 text-[#F59E0B]" />
-                        <span>DỮ LIỆU MINH HỌA – KHÔNG PHẢI TIM TUYẾN THỰC ĐỊA</span>
-                      </div>
-                      <p className="text-[11px] text-[#CBD5E1] leading-relaxed">
-                        Tuyến mẫu 3 điểm hình chữ L (204.03 m) chỉ phục vụ kiểm thử tính toán CRS, GeoJSON, dựng hình học và xuất JSON. Tọa độ minh họa không bám theo tim đường giao thông thực tế.
-                      </p>
-                    </div>
-                  )}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -1301,18 +1416,6 @@ export default function Sidebar({
                       <option value="LON_LAT">Thứ tự: Kinh độ (Lon), Vĩ độ (Lat)</option>
                       <option value="LAT_LON">Thứ tự: Vĩ độ (Lat), Kinh độ (Lon)</option>
                     </select>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setWgs84AxisOrder('LON_LAT')
-                        setWgs84Text(
-                          '106.660172, 10.762622\n106.661200, 10.762622\n106.661200, 10.763450'
-                        )
-                      }}
-                      className="text-[12px] text-[#22B7C9] hover:underline font-semibold cursor-pointer"
-                    >
-                      Điền mẫu WGS-84
-                    </button>
                   </div>
                   <textarea
                     rows={4}
@@ -1591,8 +1694,9 @@ export default function Sidebar({
                   min="1.0"
                   max="60.0"
                   value={roadWidth}
+                  placeholder="Chưa có dữ liệu"
                   onChange={(e) => updateParam('roadWidth', e.target.value)}
-                  className="w-full pl-3 pr-8 py-2 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#F06421] focus:outline-none text-[13.5px] font-mono font-bold tabular-nums text-[#E8EEF6]"
+                  className="w-full pl-3 pr-8 py-2 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#F06421] focus:outline-none text-[13px] font-mono font-bold tabular-nums text-[#E8EEF6] placeholder-[#7E92AA]/60"
                 />
                 <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] font-mono text-[#8FA3BA]">
                   m
@@ -1612,8 +1716,9 @@ export default function Sidebar({
                   min="1"
                   max="8"
                   value={laneCount}
+                  placeholder="Chưa có dữ liệu"
                   onChange={(e) => updateParam('laneCount', e.target.value)}
-                  className="w-full pl-3 pr-10 py-2 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#F06421] focus:outline-none text-[13.5px] font-mono font-bold tabular-nums text-[#E8EEF6]"
+                  className="w-full pl-3 pr-10 py-2 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#F06421] focus:outline-none text-[13px] font-mono font-bold tabular-nums text-[#E8EEF6] placeholder-[#7E92AA]/60"
                 />
                 <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] font-mono text-[#8FA3BA]">
                   dải
@@ -1633,8 +1738,9 @@ export default function Sidebar({
                   min="10"
                   max="1000"
                   value={segmentLength}
+                  placeholder="Chưa có dữ liệu"
                   onChange={(e) => updateParam('segmentLength', e.target.value)}
-                  className="w-full pl-3 pr-8 py-2 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#22B7C9] focus:outline-none text-[13.5px] font-mono font-bold tabular-nums text-[#E8EEF6]"
+                  className="w-full pl-3 pr-8 py-2 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#22B7C9] focus:outline-none text-[13px] font-mono font-bold tabular-nums text-[#E8EEF6] placeholder-[#7E92AA]/60"
                 />
                 <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] font-mono text-[#8FA3BA]">
                   m
@@ -1654,8 +1760,9 @@ export default function Sidebar({
                   min="1.0"
                   max="20.0"
                   value={slabLength}
+                  placeholder="Chưa có dữ liệu"
                   onChange={(e) => updateParam('slabLength', e.target.value)}
-                  className="w-full pl-3 pr-8 py-2 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#22B7C9] focus:outline-none text-[13.5px] font-mono font-bold tabular-nums text-[#E8EEF6]"
+                  className="w-full pl-3 pr-8 py-2 rounded-md bg-[#0B1220] border border-[#27384E] focus:border-[#22B7C9] focus:outline-none text-[13px] font-mono font-bold tabular-nums text-[#E8EEF6] placeholder-[#7E92AA]/60"
                 />
                 <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] font-mono text-[#8FA3BA]">
                   m
@@ -1667,14 +1774,22 @@ export default function Sidebar({
           {/* Computed Slab Dimension Preview Strip */}
           <div className="px-3 py-2 rounded-md bg-[#0B1220] border border-[#27384E] flex items-center justify-between text-[12.5px]">
             <span className="text-[#A9B9CE]">Kích thước 1 tấm BTXM:</span>
-            <span className="font-mono font-semibold text-[#22B7C9] tabular-nums">
-              {normalizedParams.slabLength.toFixed(1)}m ×{' '}
-              {normalizedParams.slabWidth.toFixed(2)}m (
-              {(
-                normalizedParams.slabLength * normalizedParams.slabWidth
-              ).toFixed(2)}{' '}
-              m²)
-            </span>
+            {normalizedParams.effectiveSlabLength != null &&
+            normalizedParams.slabWidth != null ? (
+              <span className="font-mono font-semibold text-[#22B7C9] tabular-nums">
+                {normalizedParams.effectiveSlabLength.toFixed(1)}m ×{' '}
+                {normalizedParams.slabWidth.toFixed(2)}m (
+                {(
+                  normalizedParams.effectiveSlabLength *
+                  normalizedParams.slabWidth
+                ).toFixed(2)}{' '}
+                m²)
+              </span>
+            ) : (
+              <span className="text-[#8FA3BA] italic text-[12px]">
+                Chưa có dữ liệu
+              </span>
+            )}
           </div>
 
           {/* Provisional Polygon Width Alert */}
@@ -1684,11 +1799,217 @@ export default function Sidebar({
                 <AlertTriangle className="w-4 h-4 text-[#F59E0B] shrink-0 mt-0.5" />
                 <div className="text-[12.5px] text-[#E8EEF6] leading-relaxed">
                   <strong className="text-[#F59E0B] block">
-                    Đã đổi bề rộng B ({analyzedRoadWidth}m → {normalizedParams.roadWidth}m)
+                    Đã đổi bề rộng B ({analyzedRoadWidth != null ? `${analyzedRoadWidth}m` : 'Chưa dựng'} → {normalizedParams.roadWidth}m)
                   </strong>
-                  Cọc lý trình và lưới tấm BTXM đã tự động cập nhật. Hãy bấm nút bên dưới để dựng lại đa giác mặt đường chính xác trước khi xuất hồ sơ.
+                  Hãy bấm nút bên dưới để dựng lại đa giác mặt đường chính xác trước khi xuất hồ sơ.
                 </div>
               </div>
+            </div>
+          )}
+        </section>
+
+        {/* ── SECTION 4: BTXM DESIGN DOSSIER PARAMETERS (INDEPENDENT FROM MAP GRID) ── */}
+        <section
+          data-testid="btxm-design-params-section"
+          className="px-4 py-4 space-y-3"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[12px] font-bold text-[#A9B9CE] uppercase tracking-wider">
+              4. Thông số thiết kế BTXM
+            </div>
+            <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded bg-[#17263C] border border-[#27384E] text-[#22B7C9]">
+              Hồ sơ thiết kế • Tùy chọn
+            </span>
+          </div>
+
+          <p className="text-[11.5px] text-[#8FA3BA] leading-snug">
+            Tự động dò tìm &amp; điền sẵn từ bản vẽ DXF khi có căn cứ rõ ràng. Kỹ sư có thể xác nhận, chỉnh sửa hoặc nhập bổ sung (tách biệt với cấu hình chia tấm trên bản đồ).
+          </p>
+
+          {dxfBtxmExtraction?.isDxf && (
+            <div
+              data-testid="btxm-dxf-scan-banner"
+              data-dxf-file={dxfBtxmExtraction.fileName}
+              data-extracted-count={dxfBtxmExtraction.extractedCount}
+              className="p-2.5 rounded-md bg-[#0B1220] border border-[#27384E] space-y-1 text-[11.5px]"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-[#E8EEF6] truncate" title={dxfBtxmExtraction.fileName}>
+                  Bóc tách DXF: {dxfBtxmExtraction.fileName}
+                </span>
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10.5px] font-mono font-semibold shrink-0 ${
+                    dxfBtxmExtraction.extractedCount > 0
+                      ? 'bg-[#22C55E]/15 text-[#4ADE80] border border-[#22C55E]/40'
+                      : 'bg-[#17263C] text-[#A9B9CE] border border-[#27384E]'
+                  }`}
+                >
+                  {dxfBtxmExtraction.extractedCount}/4 tự điền
+                </span>
+              </div>
+              <div className="text-[11px] text-[#8FA3BA] leading-snug">
+                {dxfBtxmExtraction.extractedCount > 0 && (
+                  <span className="text-[#4ADE80] font-medium">
+                    Đọc được {dxfBtxmExtraction.extractedCount} trường.{' '}
+                  </span>
+                )}
+                {dxfBtxmExtraction.ambiguousCount > 0 && (
+                  <span className="text-[#FBBF24] font-medium">
+                    {dxfBtxmExtraction.ambiguousCount} trường để trống do có nhiều giá trị, hệ số DIMLFAC hoặc thiếu đơn vị.{' '}
+                  </span>
+                )}
+                {dxfBtxmExtraction.missingCount > 0 && (
+                  <span>
+                    {dxfBtxmExtraction.missingCount} trường chưa có dữ liệu trong DXF.
+                  </span>
+                )}
+              </div>
+              {dxfBtxmExtraction.extractedCount === 0 &&
+                Array.isArray(dxfBtxmExtraction.contextMentions) &&
+                dxfBtxmExtraction.contextMentions.length > 0 && (
+                  <div className="text-[10.5px] text-[#7E92AA] font-mono pt-0.5 border-t border-[#1E2E42]">
+                    Ghi chú liên quan trong bản vẽ: &ldquo;{dxfBtxmExtraction.contextMentions[0].rawQuote}&rdquo; (Layer {dxfBtxmExtraction.contextMentions[0].layer} @ {dxfBtxmExtraction.contextMentions[0].positionText}) — không kèm số liệu 4 trường BTXM.
+                  </div>
+                )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-2.5">
+            {PAVEMENT_DESIGN_FIELD_SPECS.map((spec) => {
+              const rawVal = roadParams?.[spec.key] ?? ''
+              const fieldState = normalizedParams.pavementDesign?.fields?.[spec.key]
+              const dxfEvidence = fieldState?.dxfEvidence || null
+              const isInvalid = Boolean(fieldState && !fieldState.valid)
+              const isAutoFilled = fieldState?.provenance === 'AUTO_FILLED_FROM_DXF'
+              const isAmbiguousEmpty =
+                fieldState?.provenance === 'EMPTY_MULTIPLE_VALUES' ||
+                fieldState?.provenance === 'EMPTY_AMBIGUOUS_DIMLFAC' ||
+                fieldState?.provenance === 'EMPTY_MISSING_UNIT'
+
+              return (
+                <div
+                  key={spec.key}
+                  data-testid={`btxm-field-card-${spec.key}`}
+                  className="p-2.5 rounded-md bg-[#0B1220]/70 border border-[#27384E] space-y-1.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <label
+                      htmlFor={`input-${spec.key}`}
+                      className="block text-[12px] font-medium text-[#C0CEDF] leading-snug"
+                    >
+                      {spec.label}
+                    </label>
+                    <span
+                      data-testid={`btxm-status-badge-${spec.key}`}
+                      data-status={dxfEvidence?.status || 'NO_DXF'}
+                      data-provenance={fieldState?.provenance || 'EMPTY_NO_DXF'}
+                      className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ${
+                        isAutoFilled
+                          ? 'bg-[#22C55E]/15 text-[#4ADE80] border-[#22C55E]/40'
+                          : isAmbiguousEmpty
+                          ? 'bg-[#F59E0B]/15 text-[#FBBF24] border-[#F59E0B]/40'
+                          : fieldState?.isProvided
+                          ? 'bg-[#22B7C9]/15 text-[#22B7C9] border-[#22B7C9]/40'
+                          : 'bg-[#17263C] text-[#8FA3BA] border-[#27384E]'
+                      }`}
+                    >
+                      {dxfEvidence
+                        ? fieldState?.provenanceLabel || dxfEvidence.statusLabel
+                        : fieldState?.isProvided
+                        ? 'Nhập thủ công'
+                        : 'Chưa có dữ liệu'}
+                    </span>
+                  </div>
+
+                  <div className="relative">
+                    <input
+                      id={`input-${spec.key}`}
+                      name={spec.key}
+                      data-field={spec.key}
+                      type="text"
+                      inputMode="decimal"
+                      value={rawVal}
+                      placeholder={spec.allowZero ? 'Chưa có dữ liệu (≥ 0)' : 'Chưa có dữ liệu (> 0)'}
+                      onChange={(e) => updateParam(spec.key, e.target.value)}
+                      className={`w-full pl-2.5 pr-9 py-1.5 rounded-md bg-[#0B1220] border text-[13px] font-mono font-bold tabular-nums text-[#E8EEF6] placeholder-[#7E92AA]/60 focus:outline-none ${
+                        isInvalid
+                          ? 'border-[#EF4444] focus:border-[#EF4444] text-[#FCA5A5]'
+                          : isAutoFilled
+                          ? 'border-[#22C55E]/60 focus:border-[#22B7C9]'
+                          : isAmbiguousEmpty
+                          ? 'border-[#F59E0B]/60 focus:border-[#22B7C9]'
+                          : 'border-[#27384E] focus:border-[#22B7C9]'
+                      }`}
+                    />
+                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11.5px] font-mono text-[#8FA3BA]">
+                      {spec.unit}
+                    </span>
+                  </div>
+
+                  {dxfEvidence ? (
+                    <div
+                      data-testid={`btxm-evidence-${spec.key}`}
+                      className="text-[11px] leading-snug text-[#8FA3BA] space-y-1"
+                    >
+                      {dxfEvidence.status === 'EXTRACTED' && (
+                        <div className="text-[#A9B9CE]">
+                          <span className="text-[#4ADE80] font-semibold">Căn cứ DXF: </span>
+                          <span className="font-mono text-[#E8EEF6]">&ldquo;{dxfEvidence.rawQuote}&rdquo;</span>{' '}
+                          <span className="font-mono text-[#22B7C9]">({dxfEvidence.conversionNote})</span>{' '}
+                          <span className="font-mono text-[#8FA3BA]">
+                            • Layer {dxfEvidence.layer} @ {dxfEvidence.positionText}
+                          </span>
+                        </div>
+                      )}
+                      {dxfEvidence.status === 'MULTIPLE_VALUES' && (
+                        <div className="text-[#FBBF24]">
+                          <span className="font-semibold">Căn cứ DXF (Nhiều giá trị): </span>
+                          <span>{dxfEvidence.summaryText}</span>
+                        </div>
+                      )}
+                      {dxfEvidence.status === 'AMBIGUOUS_DIMLFAC' && (
+                        <div className="text-[#FBBF24]">
+                          <span className="font-semibold">Căn cứ DXF (DIMLFAC chưa rõ quy đổi): </span>
+                          <span>{dxfEvidence.summaryText}</span>
+                        </div>
+                      )}
+                      {dxfEvidence.status === 'MISSING_UNIT' && (
+                        <div className="text-[#FBBF24]">
+                          <span className="font-semibold">Căn cứ DXF (Thiếu đơn vị): </span>
+                          <span>{dxfEvidence.summaryText}</span>
+                        </div>
+                      )}
+                      {dxfEvidence.status === 'NOT_FOUND' && (
+                        <div className="text-[#7E92AA] font-mono text-[10.5px]">
+                          Chưa có dữ liệu trong DXF • Quy tắc: {spec.ruleText}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div
+                      data-testid={`btxm-evidence-${spec.key}`}
+                      className="text-[10.5px] font-mono text-[#7E92AA] truncate"
+                      title={spec.key}
+                    >
+                      {spec.ruleText}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {normalizedParams.pavementDesign && !normalizedParams.pavementDesign.valid && (
+            <div
+              data-testid="btxm-design-validation-error"
+              className="p-2.5 rounded-md bg-[#EF4444]/15 border border-[#EF4444]/60 text-[12px] text-[#FCA5A5] space-y-1"
+            >
+              {normalizedParams.pavementDesign.errors.map((errMsg, idx) => (
+                <div key={idx} className="flex items-start gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-[#EF4444] shrink-0 mt-0.5" />
+                  <span>{errMsg}</span>
+                </div>
+              ))}
             </div>
           )}
         </section>
