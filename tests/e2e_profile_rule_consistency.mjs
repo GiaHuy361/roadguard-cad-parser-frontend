@@ -268,6 +268,99 @@ async function run() {
     const bText = await evalJs('document.body.innerText')
     assert.ok(bText.includes('B = 7.5') || bText.includes('7.5'), 'Rebuild uses re-confirmed B = 7.5')
 
+    // ====== SUITE C: slow scan on File B -> click Build immediately -> no File A numbers in request ======
+    console.log('\n=== SUITE C: slow scan on File B -> immediate Build -> no File A leakage ===')
+    const CONFIRMED_REAL = {
+      ...REAL_PROFILE,
+      confirmedAt: '2026-11-16',
+      confirmedBy: 'KS. Nguyễn Văn Thật',
+    }
+    await seed([CONFIRMED_REAL, TEMPLATE_PROFILE], 'project-real-1')
+
+    // Intercept XMLHttpRequest to record /api/cad/parse-road FormData payloads
+    await evalJs(`(() => {
+      window.__capturedParseRoadReqs = []
+      const origOpen = XMLHttpRequest.prototype.open
+      const origSend = XMLHttpRequest.prototype.send
+      XMLHttpRequest.prototype.open = function(method, url) {
+        this.__reqUrl = url
+        return origOpen.apply(this, arguments)
+      }
+      XMLHttpRequest.prototype.send = function(body) {
+        if (this.__reqUrl && String(this.__reqUrl).includes('/api/cad/parse-road') && body instanceof FormData) {
+          const fileEntry = body.get('File')
+          window.__capturedParseRoadReqs.push({
+            roadWidth: body.get('RoadWidth'),
+            fileName: fileEntry && fileEntry.name ? fileEntry.name : null,
+            ts: Date.now(),
+          })
+        }
+        return origSend.apply(this, arguments)
+      }
+    })()`)
+
+    // Upload File A and enter manual numbers on File A
+    await setFile(BTXM_DXF)
+    await sleep(1000)
+    await setInput('#input-roadWidth', '13.5')
+    await setInput('#input-laneCount', '4')
+    await sleep(300)
+    v = await vals()
+    console.log('C1 (File A with manual 13.5/4 and DXF 24):', v)
+    assert.equal(v.roadWidth, '13.5')
+    assert.equal(v.laneCount, '4')
+    assert.equal(v.thick, '24')
+
+    // Slow down File B scan and switch to File B
+    await evalJs(`window.__RG_TEST_SCAN_DELAY_MS = 1800`)
+    await setFile(CENTERLINE_DXF)
+    await sleep(100) // File B is still scanning!
+
+    // Immediately verify File A's manual inputs & DXF extractions were wiped synchronously,
+    // confirmed project profile values auto-filled for File B, and Build button is blocked during scan
+    const midScanState = await evalJs(`(() => {
+      const btn = document.querySelector('[data-testid="analyze-route-btn"]')
+      if (btn) btn.click() // Attempt immediate click while scanning
+      return {
+        roadWidth: document.querySelector('#input-roadWidth')?.value ?? null,
+        laneCount: document.querySelector('#input-laneCount')?.value ?? null,
+        thick: document.querySelector('#input-slabThicknessCentimeters')?.value ?? null,
+        btnDisabled: btn?.disabled ?? null,
+        btnText: btn?.innerText ?? '',
+        reqsDuringScan: window.__capturedParseRoadReqs.length,
+      }
+    })()`)
+    console.log('C2 (during slow scan of File B):', midScanState)
+    assert.equal(midScanState.roadWidth, '6.5', 'File A manual 13.5 must be wiped immediately; confirmed profile 6.5 fills for File B')
+    assert.equal(midScanState.laneCount, '2', 'File A manual 4 must be wiped immediately')
+    assert.equal(midScanState.thick, '20', 'File A DXF 24 must be wiped immediately')
+    assert.equal(midScanState.btnDisabled, true, 'Build button must be disabled while scanning File B')
+    assert.equal(midScanState.reqsDuringScan, 0, 'Immediate click during scan must NOT send any request')
+
+    // Wait for slow scan to finish
+    await evalJs(`window.__RG_TEST_SCAN_DELAY_MS = 0`)
+    await sleep(2200)
+
+    const postScanState = await evalJs(`(() => {
+      const btn = document.querySelector('[data-testid="analyze-route-btn"]')
+      return {
+        btnDisabled: btn?.disabled ?? null,
+        btnText: btn?.innerText ?? '',
+      }
+    })()`)
+    console.log('C3 (after File B scan completes):', postScanState)
+    assert.equal(postScanState.btnDisabled, false, 'Build button must be enabled once File B scan finishes')
+
+    // Click Build now and verify the request uses File B + confirmed profile 6.5 (never File A 13.5)
+    assert.ok(await clickByText('Phân Tích & Dựng Tuyến'), 'Click Build after File B scan completes')
+    assert.ok(await waitAnalysis('100'), 'Build completes for File B')
+
+    const reqs = await evalJs(`window.__capturedParseRoadReqs`)
+    console.log('C4 (captured parse-road requests):', reqs)
+    assert.equal(reqs.length, 1, 'Exactly one parse-road request sent for File B')
+    assert.equal(reqs[0].fileName, 'TUYEN_THIET_KE_TRUNG_TEN.dxf', 'Request must upload File B')
+    assert.equal(reqs[0].roadWidth, '6.5', 'Request must use File B / confirmed profile 6.5, NOT File A 13.5')
+
     console.log('\n=== ALL PROFILE-RULE E2E SUITES PASSED ===')
   } finally {
     try { chrome.kill() } catch {}

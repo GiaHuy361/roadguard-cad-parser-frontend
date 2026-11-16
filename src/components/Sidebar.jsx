@@ -88,6 +88,8 @@ export default function Sidebar({
   const abortControllerRef = useRef(null)
   const btxmScanSeqRef = useRef(0)
   const dirtyFieldsForCurrentScanRef = useRef(new Set())
+  const [scanningDxf, setScanningDxf] = useState(false)
+  const scanningDxfRef = useRef(false)
   const [wgs84SubMode, setWgs84SubMode] = useState('geojson') // 'geojson' | 'coords'
   const [wgs84Text, setWgs84Text] = useState('')
   const [wgs84FileName, setWgs84FileName] = useState('')
@@ -292,17 +294,24 @@ export default function Sidebar({
         }))
       }
 
+      // Immediately clear previous file's manual edits and DXF extractions before scanning the new file.
+      applyRule(null, null)
+
       if (!selectedFile) {
-        applyRule(null, null)
+        scanningDxfRef.current = false
+        setScanningDxf(false)
         return
       }
 
       const lowerName = String(selectedFile.name || '').toLowerCase()
       if (!lowerName.endsWith('.dxf')) {
-        applyRule(null, null)
+        scanningDxfRef.current = false
+        setScanningDxf(false)
         return
       }
 
+      scanningDxfRef.current = true
+      setScanningDxf(true)
       try {
         const dxfText = await selectedFile.text()
         if (
@@ -328,6 +337,11 @@ export default function Sidebar({
       } catch {
         if (btxmScanSeqRef.current !== scanId) return
         applyRule(null, null)
+      } finally {
+        if (btxmScanSeqRef.current === scanId) {
+          scanningDxfRef.current = false
+          setScanningDxf(false)
+        }
       }
     },
     [setRoadParams, setSelectedCm]
@@ -336,6 +350,8 @@ export default function Sidebar({
   const handleRemoveFile = () => {
     abortActiveRequest()
     btxmScanSeqRef.current++
+    scanningDxfRef.current = false
+    setScanningDxf(false)
     dirtyFieldsForCurrentScanRef.current = new Set()
     setLoading(false)
     setFile(null)
@@ -351,13 +367,20 @@ export default function Sidebar({
     if (fileInputRef.current) fileInputRef.current.value = ''
     if (onCadFileChange) onCadFileChange(null)
     if (setRoadParams) {
+      const proj = activeProjectIdRef.current
+        ? projectProfilesRef.current.find((p) => p.id === activeProjectIdRef.current) || null
+        : null
       setRoadParams((prev) => ({
         ...prev,
-        slabThicknessCentimeters: '',
-        contractionJointSpacingMeters: '',
-        expansionJointSpacingMeters: '',
-        expansionJointGapMillimeters: '',
+        ...computeEffectiveParams({
+          prev,
+          dirtySet: new Set(),
+          btxmExtraction: null,
+          geomExtraction: null,
+          project: proj,
+        }),
         dxfBtxmExtraction: null,
+        dxfGeometryExtraction: null,
       }))
     }
   }
@@ -409,6 +432,10 @@ export default function Sidebar({
     async (overrideLayerName = null) => {
       if (!file) {
         toast.error('Vui lòng chọn file CAD (.dxf/.dwg) trước.')
+        return
+      }
+      if (scanningDxfRef.current) {
+        toast.error('Đang quét thông số DXF mới, vui lòng đợi hoàn tất rồi bấm Dựng tuyến.')
         return
       }
       const targetLayer =
@@ -2380,14 +2407,20 @@ export default function Sidebar({
         ) : (
           <button
             type="button"
-            disabled={loading}
+            data-testid="analyze-route-btn"
+            disabled={loading || scanningDxf}
             onClick={() => handleSubmit()}
-            className="w-full py-2.5 px-4 rounded-md bg-[#F06421] hover:bg-[#FF7635] disabled:opacity-60 text-white font-semibold text-[13.5px] flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            className="w-full py-2.5 px-4 rounded-md bg-[#F06421] hover:bg-[#FF7635] disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-[13.5px] flex items-center justify-center gap-2 transition-colors cursor-pointer"
           >
             {loading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span>Đang bóc tách CAD &amp; dựng tuyến…</span>
+              </>
+            ) : scanningDxf ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Đang quét thông số DXF…</span>
               </>
             ) : isCrsStale && file ? (
               <>
