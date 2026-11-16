@@ -1032,10 +1032,105 @@ export function extractBtxmDesignParamsFromDxfText(dxfText, fileName = '') {
 
 /**
  * Scans DXF text for Section 3 road geometry parameters (B, laneCount, segmentLength, slabLength).
+ * Supports unit validation, explicit slab-strip verification for laneCount, and multiple values detection.
  */
 export function extractRoadGeometryParamsFromDxfText(dxfText, fileName = '') {
   const tStart = typeof performance !== 'undefined' ? performance.now() : Date.now()
   const rawContent = typeof dxfText === 'string' ? dxfText : ''
+
+  const fieldFindings = {
+    roadWidth: { withUnitHits: [], missingUnitHits: [] },
+    laneCount: { withUnitHits: [], missingUnitHits: [] },
+    segmentLength: { withUnitHits: [], missingUnitHits: [] },
+    slabLength: { withUnitHits: [], missingUnitHits: [] },
+  }
+
+  if (rawContent.length > 0) {
+    const ROAD_GEOM_EXCLUSIONS = /\b(?:suoi|ranh|muong|cong|via\s*he|bo\s*via|ta\s*luy|le\s*duong|ho\s*ga|day\s*cong)\b/i
+
+    const matchers = {
+      roadWidth: /(?:bề\s*rộng\s*(?:mặt\s*(?:đường|tuyến)?|tuyến|xe\s*chạy)|be\s*rong\s*(?:mat\s*(?:duong|tuyen)?|tuyen|xe\s*chay)|chiều\s*rộng\s*mặt\s*(?:đường)?|chieu\s*rong\s*mat\s*(?:duong)?|mặt\s*đường\s*B|mat\s*duong\s*B|B\s*(?:mặt\s*đường|mat\s*duong|mặt))\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met|cm|mm)?/i,
+      // Only extract laneCount when there is explicit evidence of concrete slab strips / pavement lanes
+      laneCount: /(?:số\s*dải\s*(?:tấm|bê\s*tông|mặt\s*đường|btxm)|so\s*dai\s*(?:tam|be\s*tong|mat\s*duong|btxm)|chia\s*thành\s*([1-8])\s*dải\s*(?:tấm|bê\s*tông|btxm)?|([1-8])\s*dải\s*(?:tấm|bê\s*tông|btxm)|dải\s*tấm\s*BTXM)\s*[=:]\s*([1-8])\s*(?:dải|dai|làn|lan)?/i,
+      segmentLength: /(?:bước\s*cọc|buoc\s*coc|cự\s*ly\s*cọc|cu\s*ly\s*coc|khoảng\s*cách\s*cọc|khoang\s*cach\s*coc|chiều\s*dài\s*phân\s*đoạn|chieu\s*dai\s*phan\s*đoan)\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met)?/i,
+      slabLength: /(?:chiều\s*dài\s*tấm|chieu\s*dai\s*tam|dài\s*tấm|dai\s*tam|tấm\s*dài|tam\s*dai)\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met|cm)?/i,
+    }
+
+    const lines = rawContent.split(/\r?\n/)
+    let currentLayer = '0'
+
+    for (let i = 0; i < lines.length - 1; i++) {
+      const code = lines[i].trim()
+      const val = lines[i + 1].trim()
+
+      if (code === '8') {
+        currentLayer = val
+      }
+
+      if (code === '1' || code === '3' || code === '1000') {
+        const decoded = decodeCadText(val)
+        if (!decoded || ROAD_GEOM_EXCLUSIONS.test(decoded)) continue
+
+        for (const spec of SECTION_3_FIELD_SPECS) {
+          const regex = matchers[spec.key]
+          const m = regex.exec(decoded)
+          if (m) {
+            if (spec.key === 'laneCount') {
+              const numVal = parseInt(m[3] || m[2] || m[1], 10)
+              if (Number.isFinite(numVal) && numVal >= 1 && numVal <= 8) {
+                fieldFindings[spec.key].withUnitHits.push({
+                  rawQuote: m[0],
+                  rawNumberText: String(numVal),
+                  rawUnit: 'dải',
+                  normalizedValue: numVal,
+                  unitConverted: false,
+                  layer: currentLayer,
+                  positionText: `Layer ${currentLayer}`,
+                })
+              }
+            } else {
+              const rawNum = m[1].replace(',', '.')
+              let num = parseFloat(rawNum)
+              const rawUnit = m[2] ? m[2].toLowerCase() : null
+
+              if (rawUnit) {
+                let unitConverted = false
+                if (rawUnit === 'cm') {
+                  num /= 100
+                  unitConverted = true
+                } else if (rawUnit === 'mm') {
+                  num /= 1000
+                  unitConverted = true
+                }
+
+                if (Number.isFinite(num) && num >= spec.min && num <= spec.max) {
+                  fieldFindings[spec.key].withUnitHits.push({
+                    rawQuote: m[0],
+                    rawNumberText: m[1],
+                    rawUnit,
+                    normalizedValue: num,
+                    unitConverted,
+                    layer: currentLayer,
+                    positionText: `Layer ${currentLayer}`,
+                  })
+                }
+              } else {
+                // No unit specified
+                if (Number.isFinite(num) && num >= spec.min && num <= spec.max) {
+                  fieldFindings[spec.key].missingUnitHits.push({
+                    rawQuote: m[0],
+                    rawNumberText: m[1],
+                    layer: currentLayer,
+                    positionText: `Layer ${currentLayer}`,
+                  })
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   const fields = {}
   const autoFilledInputs = {
@@ -1045,79 +1140,111 @@ export function extractRoadGeometryParamsFromDxfText(dxfText, fileName = '') {
     slabLength: '',
   }
   let extractedCount = 0
+  let ambiguousCount = 0
   let missingCount = 0
 
   for (const spec of SECTION_3_FIELD_SPECS) {
-    fields[spec.key] = {
-      key: spec.key,
-      label: spec.label,
-      unit: spec.unit,
-      status: 'NOT_FOUND',
-      statusLabel: 'Chưa có dữ liệu',
-      autoFillValue: '',
-      normalizedValue: null,
-      allHits: [],
-      summaryText: 'Không tìm thấy ghi chú thông số này trong bản vẽ DXF.',
-    }
-  }
+    const { withUnitHits, missingUnitHits } = fieldFindings[spec.key]
 
-  if (rawContent.length > 0) {
-    // Regex matchers for geometry annotations
-    const ROAD_GEOM_EXCLUSIONS = /\b(?:suoi|ranh|muong|cong|via\s*he|bo\s*via|ta\s*luy|le\s*duong|ho\s*ga|day\s*cong)\b/i
-
-    const matchers = {
-      roadWidth: /(?:bề\s*rộng\s*(?:mặt\s*(?:đường|tuyến)?|tuyến|xe\s*chạy)|be\s*rong\s*(?:mat\s*(?:duong|tuyen)?|tuyen|xe\s*chay)|chiều\s*rộng\s*mặt\s*(?:đường)?|chieu\s*rong\s*mat\s*(?:duong)?|mặt\s*đường\s*B|mat\s*duong\s*B)\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met|cm|mm)?/i,
-      laneCount: /(?:số\s*dải\s*(?:tấm)?|so\s*dai\s*(?:tam)?|số\s*làn\s*(?:xe)?|so\s*lan\s*(?:xe)?)\s*[=:]\s*([1-8])\s*(?:dải|dai|làn|lan)?/i,
-      segmentLength: /(?:bước\s*cọc|buoc\s*coc|cự\s*ly\s*cọc|cu\s*ly\s*coc|khoảng\s*cách\s*cọc|khoang\s*cach\s*coc|chiều\s*dài\s*phân\s*đoạn|chieu\s*dai\s*phan\s*đoan)\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met)?/i,
-      slabLength: /(?:chiều\s*dài\s*tấm|chieu\s*dai\s*tam|dài\s*tấm|dai\s*tam|tấm\s*dài|tam\s*dai)\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*(m|mét|met)?/i,
-    }
-
-    // Scan lines for matches
-    const lines = rawContent.split(/\r?\n/)
-    for (let i = 0; i < lines.length - 1; i++) {
-      const code = lines[i].trim()
-      const val = lines[i + 1].trim()
-      if (code === '1' || code === '3' || code === '1000') {
-        const decoded = decodeCadText(val)
-        if (!decoded || ROAD_GEOM_EXCLUSIONS.test(decoded)) continue
-
-        for (const spec of SECTION_3_FIELD_SPECS) {
-          if (fields[spec.key].status === 'EXTRACTED') continue
-          const regex = matchers[spec.key]
-          const m = regex.exec(decoded)
-          if (m) {
-            const rawNum = m[1].replace(',', '.')
-            let num = parseFloat(rawNum)
-            const rawUnit = m[2] ? m[2].toLowerCase() : spec.unit
-            if (rawUnit === 'cm') num /= 100
-            else if (rawUnit === 'mm') num /= 1000
-
-            if (Number.isFinite(num) && num >= spec.min && num <= spec.max) {
-              const strVal = String(num)
-              fields[spec.key] = {
-                key: spec.key,
-                label: spec.label,
-                unit: spec.unit,
-                status: 'EXTRACTED',
-                statusLabel: 'Đọc được từ DXF',
-                autoFillValue: strVal,
-                normalizedValue: num,
-                rawQuote: m[0],
-                rawValueText: `${m[1]} ${m[2] || spec.unit}`,
-                layer: '0',
-                summaryText: `Trích từ "${m[0]}" trong bản vẽ`,
-              }
-              autoFilledInputs[spec.key] = strVal
-              extractedCount++
-            }
-          }
-        }
+    // Group withUnitHits by distinct normalizedValue
+    const distinctMap = new Map()
+    for (const hit of withUnitHits) {
+      const valKey = String(hit.normalizedValue)
+      if (!distinctMap.has(valKey)) {
+        distinctMap.set(valKey, {
+          normalizedValue: hit.normalizedValue,
+          hits: [],
+        })
       }
+      distinctMap.get(valKey).hits.push(hit)
     }
-  }
 
-  for (const spec of SECTION_3_FIELD_SPECS) {
-    if (fields[spec.key].status !== 'EXTRACTED') {
+    if (distinctMap.size === 1) {
+      const group = Array.from(distinctMap.values())[0]
+      const primaryHit = group.hits[0]
+      const valStr = String(group.normalizedValue)
+      fields[spec.key] = {
+        key: spec.key,
+        label: spec.label,
+        unit: spec.unit,
+        status: 'EXTRACTED',
+        statusLabel: 'Đọc được từ DXF',
+        autoFillValue: valStr,
+        normalizedValue: group.normalizedValue,
+        rawQuote: primaryHit.rawQuote,
+        rawValueText: `${primaryHit.rawNumberText} ${primaryHit.rawUnit || spec.unit}`,
+        rawUnit: primaryHit.rawUnit || spec.unit,
+        unitConverted: primaryHit.unitConverted,
+        layer: primaryHit.layer,
+        positionText: primaryHit.positionText,
+        matchCount: group.hits.length,
+        allHits: group.hits,
+        summaryText: `Trích từ "${primaryHit.rawQuote}" trong bản vẽ • Layer ${primaryHit.layer}`,
+      }
+      autoFilledInputs[spec.key] = valStr
+      extractedCount++
+    } else if (distinctMap.size > 1) {
+      const candidates = Array.from(distinctMap.values()).map((g) => {
+        const first = g.hits[0]
+        return {
+          normalizedValue: g.normalizedValue,
+          unit: spec.unit,
+          rawQuote: first.rawQuote,
+          rawValueText: `${first.rawNumberText} ${first.rawUnit || spec.unit}`,
+          layer: first.layer,
+          positionText: first.positionText,
+          count: g.hits.length,
+        }
+      })
+      const candidateListText = candidates
+        .map((c) => `${c.normalizedValue} ${c.unit} (Layer ${c.layer}: "${c.rawQuote}")`)
+        .join(' ; ')
+
+      fields[spec.key] = {
+        key: spec.key,
+        label: spec.label,
+        unit: spec.unit,
+        status: 'MULTIPLE_VALUES',
+        statusLabel: 'Có nhiều giá trị trong DXF',
+        autoFillValue: '',
+        normalizedValue: null,
+        candidates,
+        allHits: withUnitHits,
+        summaryText: `Phát hiện ${candidates.length} giá trị khác nhau: ${candidateListText}. Để trống để kỹ sư chọn.`,
+      }
+      autoFilledInputs[spec.key] = ''
+      ambiguousCount++
+    } else if (missingUnitHits.length > 0) {
+      const first = missingUnitHits[0]
+      fields[spec.key] = {
+        key: spec.key,
+        label: spec.label,
+        unit: spec.unit,
+        status: 'MISSING_UNIT',
+        statusLabel: 'Thiếu đơn vị trong DXF',
+        autoFillValue: '',
+        normalizedValue: null,
+        rawQuote: first.rawQuote,
+        rawValueText: first.rawNumberText,
+        layer: first.layer,
+        positionText: first.positionText,
+        allHits: missingUnitHits,
+        summaryText: `Tìm thấy "${first.rawQuote}" nhưng thiếu đơn vị tính (${spec.unit}). Để trống để kỹ sư xác nhận.`,
+      }
+      autoFilledInputs[spec.key] = ''
+      ambiguousCount++
+    } else {
+      fields[spec.key] = {
+        key: spec.key,
+        label: spec.label,
+        unit: spec.unit,
+        status: 'NOT_FOUND',
+        statusLabel: 'Chưa có dữ liệu',
+        autoFillValue: '',
+        normalizedValue: null,
+        allHits: [],
+        summaryText: 'Không tìm thấy ghi chú hoặc kích thước thông số này trong bản vẽ DXF.',
+      }
       missingCount++
     }
   }
@@ -1132,6 +1259,7 @@ export function extractRoadGeometryParamsFromDxfText(dxfText, fileName = '') {
     isDxf: true,
     elapsedMs,
     extractedCount,
+    ambiguousCount,
     missingCount,
     fields,
     autoFilledInputs,

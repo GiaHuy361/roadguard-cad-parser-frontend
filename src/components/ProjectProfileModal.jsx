@@ -29,6 +29,10 @@ export default function ProjectProfileModal({
     const found = profiles.find((p) => p.id === activeProjectId) || profiles[0]
     return found ? JSON.parse(JSON.stringify(found)) : null
   })
+  const [engineerNameInput, setEngineerNameInput] = useState(() => {
+    const found = profiles.find((p) => p.id === activeProjectId) || profiles[0]
+    return found?.confirmedBy || ''
+  })
   const [hasChanges, setHasChanges] = useState(false)
 
   if (!isOpen) return null
@@ -38,6 +42,7 @@ export default function ProjectProfileModal({
     if (found) {
       setSelectedEditId(id)
       setEditingProfile(JSON.parse(JSON.stringify(found)))
+      setEngineerNameInput(found.confirmedBy || '')
       setHasChanges(false)
     }
   }
@@ -90,7 +95,8 @@ export default function ProjectProfileModal({
       id: newId,
       name: 'Dự án Mới (Chưa đặt tên)',
       code: `DA-${new Date().getFullYear()}`,
-      description: 'Hồ sơ thiết kế kỹ thuật mới được khởi tạo',
+      description: 'Hồ sơ thiết kế kỹ thuật mới được khởi tạo (Bắt đầu trống)',
+      isTemplate: false,
       crs: {
         province: 'Lâm Đồng',
         centralMeridian: '107.75',
@@ -98,23 +104,24 @@ export default function ProjectProfileModal({
         axisOrder: 'AUTO',
       },
       params: {
-        roadWidth: '7.0',
-        laneCount: '2',
-        segmentLength: '100',
-        slabLength: '4.0',
-        slabThicknessCentimeters: '22',
-        contractionJointSpacingMeters: '4.0',
-        expansionJointSpacingMeters: '100.0',
-        expansionJointGapMillimeters: '20',
-        surveyWidthMeters: '14.0',
+        roadWidth: '',
+        laneCount: '',
+        segmentLength: '',
+        slabLength: '',
+        slabThicknessCentimeters: '',
+        contractionJointSpacingMeters: '',
+        expansionJointSpacingMeters: '',
+        expansionJointGapMillimeters: '',
+        surveyWidthMeters: '',
       },
-      confirmedAt: new Date().toISOString().slice(0, 10),
-      confirmedBy: 'Kỹ sư dự án',
+      confirmedAt: null,
+      confirmedBy: null,
     }
     const updated = [...profiles, newProfile]
     onSaveProfiles(updated)
     setSelectedEditId(newId)
     setEditingProfile(newProfile)
+    setEngineerNameInput('')
     onSelectProject(newId)
     setHasChanges(false)
   }
@@ -127,6 +134,7 @@ export default function ProjectProfileModal({
       id: newId,
       name: `${editingProfile.name} (Bản sao)`,
       code: `${editingProfile.code}-COPY`,
+      isTemplate: false,
     }
     const updated = [...profiles, duplicated]
     onSaveProfiles(updated)
@@ -136,6 +144,11 @@ export default function ProjectProfileModal({
   }
 
   const handleDelete = (id) => {
+    const toDelete = profiles.find((p) => p.id === id)
+    if (toDelete?.isTemplate) {
+      alert('Không thể xóa hồ sơ mẫu của hệ thống.')
+      return
+    }
     if (profiles.length <= 1) return
     const updated = profiles.filter((p) => p.id !== id)
     onSaveProfiles(updated)
@@ -205,40 +218,108 @@ export default function ProjectProfileModal({
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
-              {profiles.map((p) => {
-                const isActive = p.id === activeProjectId
-                const isSelected = p.id === selectedEditId
-                return (
-                  <div
-                    key={p.id}
-                    onClick={() => handleSelectToEdit(p.id)}
-                    className={`p-2.5 rounded-lg border text-left cursor-pointer transition-all ${
-                      isSelected
-                        ? 'bg-[#17263C] border-[#22B7C9] text-[#E8EEF6]'
-                        : 'bg-[#0B1220]/60 border-[#27384E] hover:bg-[#17263C]/50 text-[#C0CEDF]'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-1 mb-1">
-                      <span className="text-[11px] font-mono font-bold text-[#22B7C9] bg-[#22B7C9]/10 px-1.5 py-0.5 rounded border border-[#22B7C9]/30">
-                        {p.code || 'DA'}
-                      </span>
-                      {isActive && (
-                        <span className="flex items-center gap-1 text-[10.5px] font-semibold text-[#4ADE80] bg-[#22C55E]/15 px-1.5 py-0.5 rounded border border-[#22C55E]/40">
-                          <CheckCircle2 className="w-3 h-3" />
-                          <span>Đang chọn</span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[12.5px] font-semibold truncate" title={p.name}>
-                      {p.name}
-                    </div>
-                    <div className="text-[11px] text-[#8FA3BA] truncate mt-0.5">
-                      B={p.params?.roadWidth || '-'}m • Cọc={p.params?.segmentLength || '-'}m • Dày={p.params?.slabThicknessCentimeters || '-'}cm
-                    </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-3">
+              {/* Group 1: Production / Custom Projects */}
+              {profiles.filter((p) => !p.isTemplate).length > 0 && (
+                <div className="space-y-1">
+                  <div className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#8FA3BA]">
+                    📁 Hồ sơ dự án dùng thật
                   </div>
-                )
-              })}
+                  {profiles
+                    .filter((p) => !p.isTemplate)
+                    .map((p) => {
+                      const isActive = p.id === activeProjectId
+                      const isSelected = p.id === selectedEditId
+                      return (
+                        <div
+                          key={p.id}
+                          onClick={() => handleSelectToEdit(p.id)}
+                          className={`p-2.5 rounded-lg border text-left cursor-pointer transition-all ${
+                            isSelected
+                              ? 'bg-[#17263C] border-[#22B7C9] text-[#E8EEF6]'
+                              : 'bg-[#0B1220]/60 border-[#27384E] hover:bg-[#17263C]/50 text-[#C0CEDF]'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-1 mb-1">
+                            <span className="text-[11px] font-mono font-bold text-[#22B7C9] bg-[#22B7C9]/10 px-1.5 py-0.5 rounded border border-[#22B7C9]/30">
+                              {p.code || 'DA'}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {p.confirmedBy && p.confirmedAt ? (
+                                <span className="text-[9.5px] font-medium text-[#4ADE80] bg-[#22C55E]/10 px-1 py-0.2 rounded border border-[#22C55E]/30">
+                                  Đã xác nhận
+                                </span>
+                              ) : (
+                                <span className="text-[9.5px] font-medium text-[#8FA3BA] bg-[#111D2E] px-1 py-0.2 rounded border border-[#27384E]">
+                                  Chưa xác nhận
+                                </span>
+                              )}
+                              {isActive && (
+                                <span className="flex items-center gap-0.5 text-[9.5px] font-semibold text-[#4ADE80] bg-[#22C55E]/15 px-1 py-0.2 rounded border border-[#22C55E]/40">
+                                  <CheckCircle2 className="w-2.5 h-2.5" />
+                                  <span>Chọn</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-[12px] font-semibold truncate" title={p.name}>
+                            {p.name}
+                          </div>
+                          <div className="text-[10.5px] text-[#8FA3BA] truncate mt-0.5">
+                            B={p.params?.roadWidth || '-'}m • Cọc={p.params?.segmentLength || '-'}m • Dày={p.params?.slabThicknessCentimeters || '-'}cm
+                          </div>
+                        </div>
+                      )
+                    })}
+                </div>
+              )}
+
+              {/* Group 2: Sample / Template Profiles */}
+              <div className="space-y-1">
+                <div className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#8FA3BA]">
+                  📋 Hồ sơ mẫu & kiểm thử
+                </div>
+                {profiles
+                  .filter((p) => p.isTemplate)
+                  .map((p) => {
+                    const isActive = p.id === activeProjectId
+                    const isSelected = p.id === selectedEditId
+                    return (
+                      <div
+                        key={p.id}
+                        onClick={() => handleSelectToEdit(p.id)}
+                        className={`p-2.5 rounded-lg border text-left cursor-pointer transition-all ${
+                          isSelected
+                            ? 'bg-[#17263C] border-[#22B7C9] text-[#E8EEF6]'
+                            : 'bg-[#0B1220]/60 border-[#27384E] hover:bg-[#17263C]/50 text-[#C0CEDF]'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className="text-[11px] font-mono font-bold text-[#F59E0B] bg-[#F59E0B]/10 px-1.5 py-0.5 rounded border border-[#F59E0B]/30">
+                            {p.code || 'MẪU'}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[9.5px] font-medium text-[#F59E0B] bg-[#F59E0B]/10 px-1 py-0.2 rounded border border-[#F59E0B]/30">
+                              Mẫu kiểm thử
+                            </span>
+                            {isActive && (
+                              <span className="flex items-center gap-0.5 text-[9.5px] font-semibold text-[#4ADE80] bg-[#22C55E]/15 px-1 py-0.2 rounded border border-[#22C55E]/40">
+                                <CheckCircle2 className="w-2.5 h-2.5" />
+                                <span>Chọn</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-[12px] font-semibold truncate" title={p.name}>
+                          {p.name}
+                        </div>
+                        <div className="text-[10.5px] text-[#8FA3BA] truncate mt-0.5">
+                          B={p.params?.roadWidth || '-'}m • Cọc={p.params?.segmentLength || '-'}m • Dày={p.params?.slabThicknessCentimeters || '-'}cm
+                        </div>
+                      </div>
+                    )
+                  })}
+              </div>
             </div>
 
             <div className="p-2 border-t border-[#27384E] bg-[#0B1220]/80">
@@ -256,7 +337,7 @@ export default function ProjectProfileModal({
           {/* Right Column: Project Details & Parameters Editor */}
           {editingProfile ? (
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
-              {/* Top Banner: Activation status */}
+              {/* Top Banner: Activation & Template status */}
               <div className="flex items-center justify-between p-3 rounded-lg bg-[#0B1220] border border-[#27384E]">
                 <div>
                   <div className="text-[13px] font-bold text-[#E8EEF6] flex items-center gap-2">
@@ -264,9 +345,26 @@ export default function ProjectProfileModal({
                     <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-[#17263C] text-[#22B7C9] border border-[#27384E]">
                       {editingProfile.code}
                     </span>
+                    {editingProfile.isTemplate ? (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#F59E0B]/15 text-[#FBBF24] border border-[#F59E0B]/40">
+                        Hồ sơ mẫu / kiểm thử
+                      </span>
+                    ) : editingProfile.confirmedBy && editingProfile.confirmedAt ? (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#22C55E]/15 text-[#4ADE80] border border-[#22C55E]/40">
+                        Đã xác nhận hồ sơ
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#17263C] text-[#8FA3BA] border border-[#27384E]">
+                        Chưa xác nhận
+                      </span>
+                    )}
                   </div>
                   <div className="text-[11.5px] text-[#8FA3BA] mt-0.5">
-                    Xác nhận bởi: <strong className="text-[#C0CEDF]">{editingProfile.confirmedBy || 'Chưa rõ'}</strong> • {editingProfile.confirmedAt || 'Mới nhất'}
+                    {editingProfile.confirmedBy && editingProfile.confirmedAt ? (
+                      <>Xác nhận bởi: <strong className="text-[#C0CEDF]">{editingProfile.confirmedBy}</strong> • Ngày: {editingProfile.confirmedAt}</>
+                    ) : (
+                      <span className="italic text-[#8FA3BA]">Chưa có thông tin xác nhận thực tế (Hồ sơ mới khởi tạo để trống)</span>
+                    )}
                   </div>
                 </div>
 
@@ -288,7 +386,7 @@ export default function ProjectProfileModal({
                   <button
                     type="button"
                     onClick={handleDuplicate}
-                    title="Nhân bản bộ thông số này"
+                    title="Nhân bản bộ thông số này để tạo dự án dùng thật"
                     className="p-1.5 rounded border border-[#27384E] bg-[#17263C] text-[#A9B9CE] hover:text-[#E8EEF6] cursor-pointer"
                   >
                     <Copy className="w-4 h-4" />
@@ -296,13 +394,66 @@ export default function ProjectProfileModal({
                   {profiles.length > 1 && (
                     <button
                       type="button"
+                      disabled={Boolean(editingProfile.isTemplate)}
                       onClick={() => handleDelete(editingProfile.id)}
-                      title="Xóa dự án này"
-                      className="p-1.5 rounded border border-[#EF4444]/40 bg-[#EF4444]/10 text-[#FCA5A5] hover:bg-[#EF4444]/20 cursor-pointer"
+                      title={editingProfile.isTemplate ? 'Không thể xóa hồ sơ mẫu hệ thống' : 'Xóa dự án này'}
+                      className={`p-1.5 rounded border ${
+                        editingProfile.isTemplate
+                          ? 'opacity-30 border-[#27384E] bg-[#17263C] text-[#7E92AA] cursor-not-allowed'
+                          : 'border-[#EF4444]/40 bg-[#EF4444]/10 text-[#FCA5A5] hover:bg-[#EF4444]/20 cursor-pointer'
+                      }`}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   )}
+                </div>
+              </div>
+
+              {/* Dedicated Dossier Confirmation Section */}
+              <div className="p-3.5 rounded-lg bg-[#0B1220] border border-[#27384E] space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-[12px] font-bold text-[#A9B9CE] uppercase tracking-wider flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-[#22B7C9]" />
+                    <span>Xác nhận hồ sơ kỹ thuật dự án</span>
+                  </div>
+                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded border ${
+                    editingProfile.confirmedBy && editingProfile.confirmedAt
+                      ? 'bg-[#22C55E]/15 text-[#4ADE80] border-[#22C55E]/40'
+                      : 'bg-[#F59E0B]/15 text-[#FBBF24] border-[#F59E0B]/40'
+                  }`}>
+                    {editingProfile.confirmedBy && editingProfile.confirmedAt
+                      ? `Đã xác nhận: ${editingProfile.confirmedBy} (${editingProfile.confirmedAt})`
+                      : 'Chưa có xác nhận thực tế'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#8FA3BA]">
+                  Chỉ ghi người xác nhận và ngày xác nhận khi có thao tác xác nhận thực tế từ kỹ sư dự án.
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    data-testid="engineer-name-input"
+                    placeholder="Họ tên kỹ sư / người xác nhận (ví dụ: KS. Nguyễn Văn A)"
+                    value={engineerNameInput}
+                    onChange={(e) => setEngineerNameInput(e.target.value)}
+                    className="flex-1 px-3 py-1.5 rounded-md bg-[#111D2E] border border-[#27384E] text-[12.5px] text-[#E8EEF6] focus:border-[#22B7C9] focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    data-testid="confirm-dossier-btn"
+                    onClick={() => {
+                      const name = engineerNameInput.trim() || 'Kỹ sư dự án'
+                      const today = new Date().toISOString().slice(0, 10)
+                      const updatedProf = { ...editingProfile, confirmedBy: name, confirmedAt: today }
+                      setEditingProfile(updatedProf)
+                      const updatedList = profiles.map((p) => p.id === editingProfile.id ? updatedProf : p)
+                      onSaveProfiles(updatedList)
+                      setHasChanges(false)
+                    }}
+                    className="px-3.5 py-1.5 rounded-md bg-[#39B58A] hover:bg-[#2EA37A] text-[#0B1220] font-bold text-[12px] cursor-pointer whitespace-nowrap"
+                  >
+                    Xác nhận hồ sơ
+                  </button>
                 </div>
               </div>
 

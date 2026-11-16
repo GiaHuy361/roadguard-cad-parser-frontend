@@ -4,24 +4,48 @@ import os from 'os'
 import { spawn } from 'child_process'
 import assert from 'node:assert/strict'
 
-const PK_DXF_PATH = 'C:/Users/dell/Downloads/BINH DO THIET KE PK.dxf'
-const BTXM_SAMPLE_DXF_PATH = path.resolve('tests/fixtures/sample_btxm_full_4_fields.dxf')
+function getArg(flag, envVar, fallback) {
+  const idx = process.argv.indexOf(flag)
+  if (idx !== -1 && process.argv[idx + 1]) {
+    return process.argv[idx + 1]
+  }
+  return process.env[envVar] || fallback
+}
 
-assert.ok(fs.existsSync(PK_DXF_PATH), `BINH DO THIET KE PK.dxf must exist at ${PK_DXF_PATH}`)
+const PK_DXF_PATH = path.resolve(
+  getArg('--dxf', 'DXF_PATH', 'C:/Users/dell/Downloads/BINH DO THIET KE PK.dxf')
+)
+const BTXM_SAMPLE_DXF_PATH = path.resolve('tests/fixtures/sample_btxm_full_4_fields.dxf')
+const TWO_WIDTHS_DXF_PATH = path.resolve('tests/fixtures/sample_two_road_widths.dxf')
+
+const CUSTOM_CHROME = getArg('--chrome', 'CHROME_PATH', null)
+const CDP_PORT = Number(getArg('--cdp-port', 'CDP_PORT', '9398'))
+const STUDIO_URL = getArg('--url', 'STUDIO_URL', 'http://127.0.0.1:5173/studio')
+
+console.log('=== E2E TEST CONFIGURATION ===')
+console.log(`DXF Path: ${PK_DXF_PATH}`)
+console.log(`CDP Port: ${CDP_PORT}`)
+console.log(`Studio URL: ${STUDIO_URL}`)
+console.log(`Chrome Custom: ${CUSTOM_CHROME || '(Auto-detect)'}`)
+
+assert.ok(fs.existsSync(PK_DXF_PATH), `DXF file must exist at ${PK_DXF_PATH}`)
 assert.ok(fs.existsSync(BTXM_SAMPLE_DXF_PATH), `BTXM sample DXF fixture must exist at ${BTXM_SAMPLE_DXF_PATH}`)
+assert.ok(fs.existsSync(TWO_WIDTHS_DXF_PATH), `Two road widths DXF fixture must exist at ${TWO_WIDTHS_DXF_PATH}`)
 
 const CHROME_PATHS = [
+  CUSTOM_CHROME,
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
   'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
   'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-]
+].filter(Boolean)
+
 const chromeExe = CHROME_PATHS.find((p) => fs.existsSync(p))
 if (!chromeExe) throw new Error('Chrome/Edge executable not found')
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 async function run() {
-  const port = 9398
+  const port = CDP_PORT
   const userDataDir = path.join(os.tmpdir(), 'chrome_profile_proj_params_' + Date.now())
   const chrome = spawn(
     chromeExe,
@@ -32,7 +56,7 @@ async function run() {
       '--window-size=1600,1000',
       '--disable-gpu',
       '--no-first-run',
-      'http://127.0.0.1:5173/studio',
+      STUDIO_URL,
     ],
     { stdio: 'ignore' }
   )
@@ -136,11 +160,13 @@ async function run() {
     const initialProjectState = await evalJs(`(() => {
       const select = document.querySelector('[data-testid="project-profile-select"]')
       const section = document.querySelector('[data-testid="project-profile-section"]')
+      const optgroups = Array.from(select?.querySelectorAll('optgroup') || []).map(og => og.label)
       return {
         hasSelect: Boolean(select),
         activeValue: select?.value,
         optionsCount: select?.options?.length,
         summaryText: section?.innerText || '',
+        optgroups,
       }
     })()`)
     console.log('Initial project state:', initialProjectState)
@@ -148,6 +174,80 @@ async function run() {
     assert.strictEqual(initialProjectState.activeValue, 'project-bao-loc-dt725', 'Default project must be Bảo Lộc DT725')
     assert.ok(initialProjectState.optionsCount >= 3, 'Must have at least 3 project profiles')
     assert.ok(initialProjectState.summaryText.includes('B=7'), 'Summary must reflect B=7m')
+    assert.ok(initialProjectState.optgroups.some(g => g.includes('mẫu') || g.includes('kiểm thử')), 'Must have optgroup for template/sample profiles')
+
+    // Open Project Management Modal to verify template separation & new project start empty
+    console.log('Opening Project Profile Management Modal...')
+    await evalJs(`(() => {
+      const btns = Array.from(document.querySelectorAll('button'))
+      const manageBtn = btns.find(b => b.innerText.includes('Quản lý'))
+      if (manageBtn) manageBtn.click()
+    })()`)
+    await sleep(600)
+
+    // Click "+ Thêm" to create new project
+    console.log('Creating a brand new project...')
+    await evalJs(`(() => {
+      const btns = Array.from(document.querySelectorAll('button'))
+      const addBtn = btns.find(b => b.innerText.includes('Thêm'))
+      if (addBtn) addBtn.click()
+    })()`)
+    await sleep(500)
+
+    const newProjectState = await evalJs(`(() => {
+      const modal = document.querySelector('[data-testid="project-profile-modal"]')
+      const rwInput = modal?.querySelector('input[placeholder="Để trống nếu chưa xác nhận"]')
+      const confirmBadge = modal?.querySelector('span.border')
+      return {
+        rwVal: rwInput?.value || '',
+        modalTxt: modal?.innerText || '',
+      }
+    })()`)
+    console.log('New project empty state:', newProjectState)
+    assert.strictEqual(newProjectState.rwVal, '', 'New project must start with EMPTY parameters')
+    assert.ok(newProjectState.modalTxt.includes('Chưa có xác nhận thực tế'), 'New project must start unconfirmed')
+
+    // Test confirmation operation with engineer name
+    console.log('Performing actual confirmation on new project...')
+    await evalJs(`(() => {
+      const input = document.querySelector('[data-testid="engineer-name-input"]')
+      if (input) {
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+        nativeSetter.call(input, 'KS. Nguyễn Văn Thực Tế')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+      const confirmBtn = document.querySelector('[data-testid="confirm-dossier-btn"]')
+      if (confirmBtn) confirmBtn.click()
+    })()`)
+    await sleep(500)
+
+    const confirmedState = await evalJs(`(() => {
+      const modal = document.querySelector('[data-testid="project-profile-modal"]')
+      return {
+        modalTxt: modal?.innerText || '',
+      }
+    })()`)
+    console.log('Project after confirmation:', confirmedState)
+    assert.ok(confirmedState.modalTxt.includes('KS. Nguyễn Văn Thực Tế'), 'Must record confirmedBy only after actual confirmation action')
+
+    // Close modal and ensure active project is Bảo Lộc DT725 for Suite 2
+    console.log('Closing modal and ensuring active project is Bảo Lộc DT725...')
+    await evalJs(`(() => {
+      const closeBtn = document.querySelector('[data-testid="project-profile-modal"] button')
+      if (closeBtn) closeBtn.click()
+    })()`)
+    await sleep(400)
+
+    await evalJs(`(() => {
+      const select = document.querySelector('[data-testid="project-profile-select"]')
+      if (select) {
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
+        nativeSetter.call(select, 'project-bao-loc-dt725')
+        select.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+    })()`)
+    await sleep(600)
 
     // =========================================================================
     // SUITE 2: TEST WITH BINH DO THIET KE PK.dxf
@@ -457,6 +557,145 @@ async function run() {
     console.log('Missing alert state:', missingAlertState)
     assert.strictEqual(missingAlertState.hasAlert, true, 'missing-geometry-alert must appear when roadWidth is cleared')
     assert.ok(missingAlertState.alertText.includes('Bề rộng mặt'), 'Missing alert text must name Bề rộng mặt')
+
+    // =========================================================================
+    // SUITE 6: TWO ROAD WIDTHS IN SAME DXF (CONFLICTING CANDIDATES)
+    // =========================================================================
+    console.log('\n===============================================================')
+    console.log('SUITE 6: TWO ROAD WIDTHS IN SAME DXF (CONFLICTING CANDIDATES)')
+    console.log('===============================================================')
+
+    console.log('Uploading sample_two_road_widths.dxf (contains B = 7.0m and B = 8.5m)...')
+    await setFileOnInput(TWO_WIDTHS_DXF_PATH)
+    await sleep(1000)
+
+    const twoWidthsState = await evalJs(`(() => {
+      const conflictAlert = document.querySelector('[data-testid="conflict-alert-roadWidth"]')
+      const cand7Btn = document.querySelector('[data-testid="use-dxf-cand-btn-roadWidth-7"]')
+      const cand85Btn = document.querySelector('[data-testid="use-dxf-cand-btn-roadWidth-8.5"]')
+      const badge = document.querySelector('[data-testid="source-badge-roadWidth"]')?.innerText
+      return {
+        hasConflictAlert: Boolean(conflictAlert),
+        alertText: conflictAlert?.innerText || '',
+        hasCand7: Boolean(cand7Btn),
+        hasCand85: Boolean(cand85Btn),
+        badge,
+      }
+    })()`)
+    console.log('Two widths state:', twoWidthsState)
+    assert.strictEqual(twoWidthsState.hasConflictAlert, true, 'Must display conflict alert for multiple road width values in DXF')
+    assert.ok(twoWidthsState.hasCand7, 'Must provide candidate button for 7.0m')
+    assert.ok(twoWidthsState.hasCand85, 'Must provide candidate button for 8.5m')
+
+    // Click [Dùng DXF: 8.5]
+    console.log('Clicking candidate [Dùng DXF: 8.5]...')
+    await evalJs(`(() => {
+      const btn = document.querySelector('[data-testid="use-dxf-cand-btn-roadWidth-8.5"]')
+      if (btn) btn.click()
+    })()`)
+    await sleep(400)
+
+    const selectedWidthState = await evalJs(`(() => {
+      return {
+        val: document.querySelector('#input-roadWidth')?.value,
+        badge: document.querySelector('[data-testid="source-badge-roadWidth"]')?.innerText,
+      }
+    })()`)
+    console.log('Selected candidate state:', selectedWidthState)
+    assert.strictEqual(selectedWidthState.val, '8.5', 'roadWidth must be set to selected candidate 8.5m')
+    assert.strictEqual(selectedWidthState.badge, 'Kỹ sư đã sửa', 'Must indicate engineer manual override')
+
+    // =========================================================================
+    // SUITE 7: SWITCH PROJECT DURING SCAN (RACE CONDITION SAFETY)
+    // =========================================================================
+    console.log('\n===============================================================')
+    console.log('SUITE 7: SWITCH PROJECT DURING SCAN (RACE CONDITION SAFETY)')
+    console.log('===============================================================')
+
+    // Set artificial scan delay of 800ms to allow project switch in-flight
+    await evalJs(`window.__RG_TEST_SCAN_DELAY_MS = 800`)
+
+    console.log('Triggering DXF file upload with delay...')
+    setFileOnInput(BTXM_SAMPLE_DXF_PATH) // fire without await
+    await sleep(150)
+
+    console.log('Switching project to GTNT-MAU-01 during scan...')
+    await evalJs(`(() => {
+      const select = document.querySelector('[data-testid="project-profile-select"]')
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
+      nativeSetter.call(select, 'project-nong-thon-mau')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+
+    // Wait for delayed scan to finish
+    await sleep(1200)
+    await evalJs(`window.__RG_TEST_SCAN_DELAY_MS = 0`)
+
+    const midScanProjectState = await evalJs(`(() => {
+      return {
+        segmentLength: document.querySelector('#input-segmentLength')?.value,
+        expansionJointGap: document.querySelector('#input-expansionJointGapMillimeters')?.value,
+        gapBadge: document.querySelector('[data-testid="btxm-status-badge-expansionJointGapMillimeters"]')?.innerText,
+      }
+    })()`)
+    console.log('State after project switch during scan:', midScanProjectState)
+    assert.strictEqual(midScanProjectState.segmentLength, '50', 'segmentLength must take GTNT project value (50m)')
+    assert.strictEqual(midScanProjectState.expansionJointGap, '15', 'expansionJointGap must take GTNT project value (15mm)')
+    assert.ok(midScanProjectState.gapBadge.includes('GTNT-MAU-01'), 'Badge must cite GTNT-MAU-01')
+
+    // =========================================================================
+    // SUITE 8: LOAD FILE AFTER MANUAL CRS CONFIGURATION (CRS PRESERVATION)
+    // =========================================================================
+    console.log('\n===============================================================')
+    console.log('SUITE 8: LOAD FILE AFTER MANUAL CRS CONFIGURATION (CRS PRESERVATION)')
+    console.log('===============================================================')
+
+    // Engineer manually picks HCM L₀ = 105.75°
+    console.log('Engineer manually selects L₀ = 105.75°...')
+    await evalJs(`(() => {
+      const input = document.querySelector('#input-central-meridian')
+      if (input) {
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+        nativeSetter.call(input, '105.75')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+    })()`)
+    await sleep(400)
+
+    // Upload DXF while active project has L₀ = 107.75°
+    console.log('Uploading DXF and checking CRS retention...')
+    await setFileOnInput(BTXM_SAMPLE_DXF_PATH)
+    await sleep(800)
+
+    const crsRetentionState = await evalJs(`(() => {
+      const input = document.querySelector('#input-central-meridian')
+      const applyBtn = document.querySelector('[data-testid="apply-project-crs-btn"]')
+      return {
+        currentCm: input?.value,
+        hasApplyBtn: Boolean(applyBtn),
+        applyBtnText: applyBtn?.innerText || '',
+      }
+    })()`)
+    console.log('CRS retention state:', crsRetentionState)
+    assert.strictEqual(crsRetentionState.currentCm, '105.75', 'Manual CRS must be strictly preserved after loading DXF')
+    assert.strictEqual(crsRetentionState.hasApplyBtn, true, 'Must display explicit button to adopt project CRS')
+    assert.ok(crsRetentionState.applyBtnText.includes('107.75'), 'Apply button must cite project L₀ = 107.75°')
+
+    // Test active adoption when engineer explicitly clicks the button
+    console.log('Actively applying project CRS...')
+    await evalJs(`(() => {
+      const btn = document.querySelector('[data-testid="apply-project-crs-btn"]')
+      if (btn) btn.click()
+    })()`)
+    await sleep(400)
+
+    const crsAdoptedState = await evalJs(`(() => {
+      const input = document.querySelector('#input-central-meridian')
+      return { currentCm: input?.value }
+    })()`)
+    console.log('CRS adopted state:', crsAdoptedState)
+    assert.strictEqual(crsAdoptedState.currentCm, '107.75', 'CRS must only update when engineer actively clicks adopt')
 
     console.log('\n===============================================================')
     console.log('ALL PROJECT PARAMETER PROFILE E2E TESTS PASSED 100% (STRICT)!')

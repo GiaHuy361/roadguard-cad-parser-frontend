@@ -305,9 +305,6 @@ export default function Sidebar({
       }
     })
 
-    if (newProj.crs?.centralMeridian) {
-      setSelectedCm(String(newProj.crs.centralMeridian))
-    }
     toast.success(`Đã áp dụng bộ thông số dự án: ${newProj.name}`)
   }
 
@@ -418,6 +415,13 @@ export default function Sidebar({
           return ''
         }
 
+        const currentActiveProj =
+          projectProfilesRef.current.find(
+            (p) => p.id === activeProjectIdRef.current
+          ) ||
+          projectProfilesRef.current[0] ||
+          DEFAULT_PROJECT_PROFILES[0]
+
         setRoadParams((prev) => {
           const next = { ...prev }
           const btxmInputs = btxmExtraction.autoFilledInputs || {}
@@ -426,56 +430,56 @@ export default function Sidebar({
           const rw = getEffectiveVal(
             'roadWidth',
             geomInputs.roadWidth,
-            activeProj.params?.roadWidth
+            currentActiveProj.params?.roadWidth
           )
           if (rw !== undefined) next.roadWidth = rw
 
           const lc = getEffectiveVal(
             'laneCount',
             geomInputs.laneCount,
-            activeProj.params?.laneCount
+            currentActiveProj.params?.laneCount
           )
           if (lc !== undefined) next.laneCount = lc
 
           const sl = getEffectiveVal(
             'segmentLength',
             geomInputs.segmentLength,
-            activeProj.params?.segmentLength
+            currentActiveProj.params?.segmentLength
           )
           if (sl !== undefined) next.segmentLength = sl
 
           const sb = getEffectiveVal(
             'slabLength',
             geomInputs.slabLength,
-            activeProj.params?.slabLength
+            currentActiveProj.params?.slabLength
           )
           if (sb !== undefined) next.slabLength = sb
 
           const st = getEffectiveVal(
             'slabThicknessCentimeters',
             btxmInputs.slabThicknessCentimeters,
-            activeProj.params?.slabThicknessCentimeters
+            currentActiveProj.params?.slabThicknessCentimeters
           )
           if (st !== undefined) next.slabThicknessCentimeters = st
 
           const cj = getEffectiveVal(
             'contractionJointSpacingMeters',
             btxmInputs.contractionJointSpacingMeters,
-            activeProj.params?.contractionJointSpacingMeters
+            currentActiveProj.params?.contractionJointSpacingMeters
           )
           if (cj !== undefined) next.contractionJointSpacingMeters = cj
 
           const ej = getEffectiveVal(
             'expansionJointSpacingMeters',
             btxmInputs.expansionJointSpacingMeters,
-            activeProj.params?.expansionJointSpacingMeters
+            currentActiveProj.params?.expansionJointSpacingMeters
           )
           if (ej !== undefined) next.expansionJointSpacingMeters = ej
 
           const eg = getEffectiveVal(
             'expansionJointGapMillimeters',
             btxmInputs.expansionJointGapMillimeters,
-            activeProj.params?.expansionJointGapMillimeters
+            currentActiveProj.params?.expansionJointGapMillimeters
           )
           if (eg !== undefined) next.expansionJointGapMillimeters = eg
 
@@ -483,11 +487,6 @@ export default function Sidebar({
           next.dxfGeometryExtraction = geomExtraction
           return next
         })
-
-        // Apply active project central meridian if configured
-        if (activeProj.crs?.centralMeridian) {
-          setSelectedCm(String(activeProj.crs.centralMeridian))
-        }
       } catch {
         if (btxmScanSeqRef.current !== scanId) return
         const dirtySet = new Set(dirtyFieldsForCurrentScanRef.current)
@@ -1502,11 +1501,26 @@ export default function Sidebar({
                 onChange={(e) => handleSelectProject(e.target.value)}
                 className="w-full pl-2.5 pr-8 py-1.5 rounded-md bg-[#111D2E] border border-[#27384E] text-[12px] font-medium text-[#E8EEF6] focus:border-[#22B7C9] focus:outline-none cursor-pointer"
               >
-                {projectProfiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    [{p.code}] {p.name}
-                  </option>
-                ))}
+                {projectProfiles.filter((p) => !p.isTemplate).length > 0 && (
+                  <optgroup label="📁 Hồ sơ dự án dùng thật">
+                    {projectProfiles
+                      .filter((p) => !p.isTemplate)
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          [{p.code}] {p.name}
+                        </option>
+                      ))}
+                  </optgroup>
+                )}
+                <optgroup label="📋 Hồ sơ mẫu & kiểm thử">
+                  {projectProfiles
+                    .filter((p) => p.isTemplate)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        [{p.code}] {p.name}
+                      </option>
+                    ))}
+                </optgroup>
               </select>
             </div>
 
@@ -1517,6 +1531,25 @@ export default function Sidebar({
                 B={activeProject.params?.roadWidth || '-'}m • Cọc={activeProject.params?.segmentLength || '-'}m • Dày={activeProject.params?.slabThicknessCentimeters || '-'}cm
               </span>
             </div>
+
+            {/* Explicit Button to adopt project CRS if different from current engineer's selection */}
+            {activeProject.crs?.centralMeridian &&
+              Math.abs(Number(activeProject.crs.centralMeridian) - Number(selectedCm)) > 1e-4 && (
+                <button
+                  type="button"
+                  data-testid="apply-project-crs-btn"
+                  onClick={() => {
+                    setSelectedCm(String(activeProject.crs.centralMeridian))
+                    toast.success(
+                      `Đã áp dụng kinh tuyến trục L₀ = ${activeProject.crs.centralMeridian}° từ hồ sơ dự án`
+                    )
+                  }}
+                  className="w-full px-2 py-1 rounded bg-[#22B7C9]/15 hover:bg-[#22B7C9]/25 text-[#22B7C9] text-[11px] font-semibold border border-[#22B7C9]/40 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Building2 className="w-3 h-3 shrink-0" />
+                  <span>Áp dụng L₀ = {activeProject.crs.centralMeridian}° từ hồ sơ dự án</span>
+                </button>
+              )}
           </div>
         </section>
 
@@ -1900,6 +1933,8 @@ export default function Sidebar({
                 Kinh tuyến trục L₀ (°)
               </label>
               <input
+                id="input-central-meridian"
+                data-testid="central-meridian-input"
                 type="number"
                 step="0.05"
                 min="100"
@@ -2077,41 +2112,65 @@ export default function Sidebar({
                     </span>
                   </div>
 
-                  {/* Conflict Box if DXF and Project differ */}
-                  {fState.hasConflict && (
+                  {/* Conflict Box if DXF and Project differ or DXF has multiple values */}
+                  {(fState.hasConflict || fState.hasMultipleDxf) && (
                     <div
                       data-testid={`conflict-alert-${spec.key}`}
-                      className="p-1.5 rounded bg-[#F59E0B]/10 border border-[#F59E0B]/40 space-y-1 text-[10.5px]"
+                      className="p-1.5 rounded bg-[#F59E0B]/10 border border-[#F59E0B]/40 space-y-1.5 text-[10.5px]"
                     >
                       <div className="flex items-center gap-1 text-[#FBBF24] font-medium leading-tight">
                         <AlertTriangle className="w-3 h-3 shrink-0" />
-                        <span>DXF ({fState.dxfValue} {spec.unit}) ≠ Dự án ({fState.projectValue} {spec.unit})</span>
+                        <span>
+                          {fState.hasMultipleDxf
+                            ? `DXF có ${fState.dxfCandidates?.length || 2} giá trị mâu thuẫn: ${fState.dxfCandidates?.map((c) => `${c.normalizedValue} ${spec.unit}`).join(', ')}`
+                            : `DXF (${fState.dxfValue} ${spec.unit}) ≠ Dự án (${fState.projectValue} ${spec.unit})`}
+                        </span>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          data-testid={`use-dxf-btn-${spec.key}`}
-                          onClick={() => updateParam(spec.key, fState.dxfValue)}
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
-                            String(roadParams?.[spec.key]) === String(fState.dxfValue)
-                              ? 'bg-[#22C55E]/20 text-[#4ADE80] border-[#22C55E]/50'
-                              : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
-                          }`}
-                        >
-                          DXF: {fState.dxfValue}
-                        </button>
-                        <button
-                          type="button"
-                          data-testid={`use-proj-btn-${spec.key}`}
-                          onClick={() => updateParam(spec.key, fState.projectValue)}
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
-                            String(roadParams?.[spec.key]) === String(fState.projectValue)
-                              ? 'bg-[#22B7C9]/20 text-[#22B7C9] border-[#22B7C9]/50'
-                              : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
-                          }`}
-                        >
-                          Dự án: {fState.projectValue}
-                        </button>
+                      <div className="flex items-center flex-wrap gap-1">
+                        {fState.hasMultipleDxf &&
+                          fState.dxfCandidates?.map((cand) => (
+                            <button
+                              key={cand.normalizedValue}
+                              type="button"
+                              data-testid={`use-dxf-cand-btn-${spec.key}-${cand.normalizedValue}`}
+                              onClick={() => updateParam(spec.key, String(cand.normalizedValue))}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
+                                String(roadParams?.[spec.key]) === String(cand.normalizedValue)
+                                  ? 'bg-[#22C55E]/20 text-[#4ADE80] border-[#22C55E]/50'
+                                  : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
+                              }`}
+                            >
+                              Dùng DXF: {cand.normalizedValue}
+                            </button>
+                          ))}
+                        {!fState.hasMultipleDxf && fState.dxfValue && (
+                          <button
+                            type="button"
+                            data-testid={`use-dxf-btn-${spec.key}`}
+                            onClick={() => updateParam(spec.key, fState.dxfValue)}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
+                              String(roadParams?.[spec.key]) === String(fState.dxfValue)
+                                ? 'bg-[#22C55E]/20 text-[#4ADE80] border-[#22C55E]/50'
+                                : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
+                            }`}
+                          >
+                            Dùng DXF: {fState.dxfValue}
+                          </button>
+                        )}
+                        {fState.projectValue && (
+                          <button
+                            type="button"
+                            data-testid={`use-proj-btn-${spec.key}`}
+                            onClick={() => updateParam(spec.key, fState.projectValue)}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
+                              String(roadParams?.[spec.key]) === String(fState.projectValue)
+                                ? 'bg-[#22B7C9]/20 text-[#22B7C9] border-[#22B7C9]/50'
+                                : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
+                            }`}
+                          >
+                            Dùng Dự án: {fState.projectValue}
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -2327,41 +2386,65 @@ export default function Sidebar({
                     </span>
                   </div>
 
-                  {/* Conflict Box if DXF and Project differ */}
-                  {fState?.hasConflict && (
+                  {/* Conflict Box if DXF and Project differ or DXF has multiple values */}
+                  {(fState?.hasConflict || fState?.hasMultipleDxf) && (
                     <div
                       data-testid={`conflict-alert-${spec.key}`}
-                      className="p-1.5 rounded bg-[#F59E0B]/10 border border-[#F59E0B]/40 space-y-1 text-[10.5px]"
+                      className="p-1.5 rounded bg-[#F59E0B]/10 border border-[#F59E0B]/40 space-y-1.5 text-[10.5px]"
                     >
                       <div className="flex items-center gap-1 text-[#FBBF24] font-medium leading-tight">
                         <AlertTriangle className="w-3 h-3 shrink-0" />
-                        <span>DXF ({fState.dxfValue} {spec.unit}) ≠ Dự án ({fState.projectValue} {spec.unit})</span>
+                        <span>
+                          {fState.hasMultipleDxf
+                            ? `DXF có ${fState.dxfCandidates?.length || 2} giá trị mâu thuẫn: ${fState.dxfCandidates?.map((c) => `${c.normalizedValue} ${spec.unit}`).join(', ')}`
+                            : `DXF (${fState.dxfValue} ${spec.unit}) ≠ Dự án (${fState.projectValue} ${spec.unit})`}
+                        </span>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          data-testid={`use-dxf-btn-${spec.key}`}
-                          onClick={() => updateParam(spec.key, fState.dxfValue)}
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
-                            String(rawVal) === String(fState.dxfValue)
-                              ? 'bg-[#22C55E]/20 text-[#4ADE80] border-[#22C55E]/50'
-                              : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
-                          }`}
-                        >
-                          Dùng DXF: {fState.dxfValue}
-                        </button>
-                        <button
-                          type="button"
-                          data-testid={`use-proj-btn-${spec.key}`}
-                          onClick={() => updateParam(spec.key, fState.projectValue)}
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
-                            String(rawVal) === String(fState.projectValue)
-                              ? 'bg-[#22B7C9]/20 text-[#22B7C9] border-[#22B7C9]/50'
-                              : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
-                          }`}
-                        >
-                          Dùng Dự án: {fState.projectValue}
-                        </button>
+                      <div className="flex items-center flex-wrap gap-1">
+                        {fState.hasMultipleDxf &&
+                          fState.dxfCandidates?.map((cand) => (
+                            <button
+                              key={cand.normalizedValue}
+                              type="button"
+                              data-testid={`use-dxf-cand-btn-${spec.key}-${cand.normalizedValue}`}
+                              onClick={() => updateParam(spec.key, String(cand.normalizedValue))}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
+                                String(rawVal) === String(cand.normalizedValue)
+                                  ? 'bg-[#22C55E]/20 text-[#4ADE80] border-[#22C55E]/50'
+                                  : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
+                              }`}
+                            >
+                              Dùng DXF: {cand.normalizedValue}
+                            </button>
+                          ))}
+                        {!fState.hasMultipleDxf && fState.dxfValue && (
+                          <button
+                            type="button"
+                            data-testid={`use-dxf-btn-${spec.key}`}
+                            onClick={() => updateParam(spec.key, fState.dxfValue)}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
+                              String(rawVal) === String(fState.dxfValue)
+                                ? 'bg-[#22C55E]/20 text-[#4ADE80] border-[#22C55E]/50'
+                                : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
+                            }`}
+                          >
+                            Dùng DXF: {fState.dxfValue}
+                          </button>
+                        )}
+                        {fState.projectValue && (
+                          <button
+                            type="button"
+                            data-testid={`use-proj-btn-${spec.key}`}
+                            onClick={() => updateParam(spec.key, fState.projectValue)}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer border ${
+                              String(rawVal) === String(fState.projectValue)
+                                ? 'bg-[#22B7C9]/20 text-[#22B7C9] border-[#22B7C9]/50'
+                                : 'bg-[#17263C] text-[#C0CEDF] border-[#27384E] hover:bg-[#20324D]'
+                            }`}
+                          >
+                            Dùng Dự án: {fState.projectValue}
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}

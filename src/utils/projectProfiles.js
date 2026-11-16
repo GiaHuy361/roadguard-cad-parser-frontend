@@ -100,13 +100,15 @@ export const ALL_PARAM_SPECS = [...SECTION_3_SPECS, ...SECTION_4_SPECS]
 
 /**
  * Predefined master project profiles with authentic parameters.
+ * Marked as isTemplate: true to separate sample/template profiles from production profiles.
  */
 export const DEFAULT_PROJECT_PROFILES = [
   {
     id: 'project-bao-loc-dt725',
-    name: 'Dự án Nâng cấp ĐT.725 Bảo Lộc - Đạ Tẻh',
+    name: '[Mẫu kiểm thử] Dự án Nâng cấp ĐT.725 Bảo Lộc - Đạ Tẻh',
     code: 'DT725-BL',
-    description: 'Hồ sơ kỹ thuật tuyến ĐT.725 Bảo Lộc (Kinh tuyến trục 107°45\', k=0.9999, Lâm Đồng)',
+    isTemplate: true,
+    description: 'Bộ dữ liệu mẫu kiểm thử đối chiếu hồ sơ kỹ thuật ĐT.725 Bảo Lộc (Kinh tuyến trục 107°45\', k=0.9999, Lâm Đồng)',
     crs: {
       province: 'Lâm Đồng',
       centralMeridian: '107.75',
@@ -128,12 +130,13 @@ export const DEFAULT_PROJECT_PROFILES = [
       surveyWidthMeters: '14.0',
     },
     confirmedAt: '2026-10-15',
-    confirmedBy: 'Kỹ sư trưởng dự án',
+    confirmedBy: 'Hồ sơ thiết kế ĐT.725 (Đối chiếu kỹ thuật)',
   },
   {
     id: 'project-nong-thon-mau',
-    name: 'Dự án Đường GTNT Mẫu (Mặt 3.5m, 1 dải)',
+    name: '[Mẫu] Đường GTNT Mẫu (Mặt 3.5m, 1 dải)',
     code: 'GTNT-MAU-01',
+    isTemplate: true,
     description: 'Thiết kế mẫu đường giao thông nông thôn BTXM mặt hẹp',
     crs: {
       province: 'Lâm Đồng',
@@ -153,12 +156,13 @@ export const DEFAULT_PROJECT_PROFILES = [
       surveyWidthMeters: '8.0',
     },
     confirmedAt: '2026-10-10',
-    confirmedBy: 'Kỹ sư dự án GTNT',
+    confirmedBy: 'Hồ sơ mẫu GTNT',
   },
   {
     id: 'project-do-thi-4lanes',
-    name: 'Dự án Đường Đô Thị 4 Làn Xe (Mặt 14.0m)',
+    name: '[Mẫu] Đường Đô Thị 4 Làn Xe (Mặt 14.0m)',
     code: 'DT-4L-02',
+    isTemplate: true,
     description: 'Tuyến đường trục đô thị BTXM 4 làn có dải phân cách',
     crs: {
       province: 'Lâm Đồng',
@@ -178,7 +182,7 @@ export const DEFAULT_PROJECT_PROFILES = [
       surveyWidthMeters: '22.0',
     },
     confirmedAt: '2026-11-01',
-    confirmedBy: 'Chủ nhiệm đồ án',
+    confirmedBy: 'Hồ sơ mẫu Đô thị',
   },
 ]
 
@@ -271,9 +275,14 @@ export function resolveParameterFieldState({
   )
   const cleanProject = hasProject ? String(projectVal).trim() : null
 
-  // Check discrepancy / conflict between DXF and Project
+  const isMultipleDxf = Boolean(dxfEvidence && dxfEvidence.status === 'MULTIPLE_VALUES')
+  const dxfCandidates = isMultipleDxf && Array.isArray(dxfEvidence.candidates) ? dxfEvidence.candidates : []
+
+  // Check discrepancy / conflict between DXF and Project, or multiple values in DXF
   let hasConflict = false
-  if (hasDxf && hasProject) {
+  if (isMultipleDxf && dxfCandidates.length > 1) {
+    hasConflict = true
+  } else if (hasDxf && hasProject) {
     const numDxf = Number(cleanDxf)
     const numProj = Number(cleanProject)
     if (!isNaN(numDxf) && !isNaN(numProj)) {
@@ -295,6 +304,8 @@ export function resolveParameterFieldState({
       sourceBadgeClass: 'bg-[#F06421]/15 text-[#F06421] border-[#F06421]/40',
       hasDxf,
       dxfValue: cleanDxf,
+      hasMultipleDxf: isMultipleDxf,
+      dxfCandidates,
       dxfEvidence,
       hasProject,
       projectValue: cleanProject,
@@ -303,7 +314,32 @@ export function resolveParameterFieldState({
     }
   }
 
-  // 2. Priority 1: Authentic DXF extracted value
+  // 2. Multiple conflicting values inside DXF
+  if (isMultipleDxf) {
+    const fallbackValue = hasProject ? cleanProject : ''
+    const fallbackLabel = hasProject
+      ? (projectCode ? `Từ dự án: ${projectCode}` : `Từ dự án: ${projectName}`)
+      : 'Nhiều giá trị trong DXF'
+    return {
+      value: fallbackValue,
+      source: hasProject ? 'FROM_PROJECT' : 'MULTIPLE_DXF',
+      sourceLabel: fallbackLabel,
+      sourceBadgeClass: hasProject
+        ? 'bg-[#22B7C9]/15 text-[#22B7C9] border-[#22B7C9]/40'
+        : 'bg-[#F59E0B]/15 text-[#FBBF24] border-[#F59E0B]/40',
+      hasDxf: false,
+      dxfValue: null,
+      hasMultipleDxf: true,
+      dxfCandidates,
+      dxfEvidence,
+      hasProject,
+      projectValue: cleanProject,
+      hasConflict: true,
+      isMissing: fallbackValue === '',
+    }
+  }
+
+  // 3. Priority 1: Authentic DXF single extracted value
   if (hasDxf) {
     return {
       value: cleanDxf,
@@ -312,6 +348,8 @@ export function resolveParameterFieldState({
       sourceBadgeClass: 'bg-[#22C55E]/15 text-[#4ADE80] border-[#22C55E]/40',
       hasDxf: true,
       dxfValue: cleanDxf,
+      hasMultipleDxf: false,
+      dxfCandidates: [],
       dxfEvidence,
       hasProject,
       projectValue: cleanProject,
@@ -320,7 +358,7 @@ export function resolveParameterFieldState({
     }
   }
 
-  // 3. Priority 2: Confirmed Project Profile
+  // 4. Priority 2: Confirmed Project Profile
   if (hasProject) {
     const label = projectCode ? `Từ dự án: ${projectCode}` : `Từ dự án: ${projectName}`
     return {
@@ -330,6 +368,8 @@ export function resolveParameterFieldState({
       sourceBadgeClass: 'bg-[#22B7C9]/15 text-[#22B7C9] border-[#22B7C9]/40',
       hasDxf: false,
       dxfValue: null,
+      hasMultipleDxf: false,
+      dxfCandidates: [],
       dxfEvidence: null,
       hasProject: true,
       projectValue: cleanProject,
@@ -338,7 +378,7 @@ export function resolveParameterFieldState({
     }
   }
 
-  // 4. Missing in both sources
+  // 5. Missing in both sources
   return {
     value: '',
     source: 'MISSING',
@@ -346,6 +386,8 @@ export function resolveParameterFieldState({
     sourceBadgeClass: 'bg-[#17263C] text-[#8FA3BA] border-[#27384E]',
     hasDxf: false,
     dxfValue: null,
+    hasMultipleDxf: false,
+    dxfCandidates: [],
     dxfEvidence: null,
     hasProject: false,
     projectValue: null,
